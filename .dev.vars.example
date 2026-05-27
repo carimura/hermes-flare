@@ -1,14 +1,8 @@
-# Copy to .dev.vars for `wrangler dev`. Do NOT commit .dev.vars.
+# Local-dev-only secrets template. Copy to `.dev.vars` for `wrangler dev`.
+# .dev.vars is NEVER deployed — for production secrets, use `wrangler secret put`.
+# See README.md for the canonical list and setup instructions.
 
-# --- Required ---
 ANTHROPIC_API_KEY=sk-ant-
 HERMES_GATEWAY_TOKEN=
-
-# --- Slack (Socket Mode — no public URL needed) ---
 SLACK_BOT_TOKEN=xoxb-
-SLACK_APP_TOKEN=xapp-                  # connections:write scope
-SLACK_ALLOWED_USERS=                   # comma-separated Slack member IDs (U01ABC2DEF3)
-
-# --- Optional: hibernation ---
-# 'never' (default) keeps the container warm. Set a duration to scale to zero.
-# SANDBOX_SLEEP_AFTER=10m
+SLACK_APP_TOKEN=xapp-

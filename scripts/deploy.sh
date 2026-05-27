@@ -31,4 +31,6 @@ for VAR in "${VARS[@]}"; do
   fi
 done
 
-exec npx wrangler deploy "${ARGS[@]}" "$@"
+# `${ARGS[@]+"${ARGS[@]}"}` survives an empty array under `set -u` (macOS
+# default bash 3.2 treats `${ARGS[@]}` on an empty array as unbound).
+exec npx wrangler deploy ${ARGS[@]+"${ARGS[@]}"} "$@"

@@ -41,6 +41,8 @@
   // Universal non-secret defaults. Personal config (Slack member IDs,
   // home channel) lives in `.env` (gitignored) and is applied via
   // `wrangler deploy --var` by scripts/deploy.sh. Use `npm run deploy`.
+  // Secrets and personal vars are documented in README.md. Set secrets via
+  // `wrangler secret put`; set personal vars in `.env` (see .env.example).
   "vars": {
     // "true" → Hermes replies in a thread (Slack default).
     // "false" → Hermes posts at the channel top level.
@@ -50,14 +52,4 @@
     // Set "10m" / "1h" / "30s" to scale to zero when idle.
     "SANDBOX_SLEEP_AFTER": "never"
   }
-
-  // Secrets (set via `wrangler secret put`):
-  //   ANTHROPIC_API_KEY        — required, forwarded into the container
-  //   HERMES_GATEWAY_TOKEN     — required, protects /api and gateway access
-  //   SLACK_BOT_TOKEN          — Slack bot token (xoxb-...)
-  //   SLACK_APP_TOKEN          — Slack app-level token (xapp-... + connections:write)
-  //
-  //   (later, once Cloudflare Access is wired up:)
-  //   CF_ACCESS_TEAM_DOMAIN
-  //   CF_ACCESS_AUD
 }
