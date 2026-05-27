@@ -69,6 +69,16 @@ app.get("/api/logs", async (c) => {
     "tail -n 100 \"$(ls -t /opt/data/logs/*.log 2>/dev/null | head -1)\" 2>&1 || echo '(none)'",
   );
   lines.push("--- latest hermes log (last 100) ---", latestHermesLog.stdout);
+  const exitDiag = await sandbox.exec("cat /opt/data/logs/gateway-exit-diag.log 2>&1 || echo '(none)'");
+  lines.push("--- gateway-exit-diag.log ---", exitDiag.stdout);
+  const errors = await sandbox.exec("tail -n 50 /opt/data/logs/errors.log 2>&1 || echo '(none)'");
+  lines.push("--- errors.log (last 50) ---", errors.stdout);
+  const ps = await sandbox.exec("ps -ef 2>&1 | head -30");
+  lines.push("--- ps -ef (top 30) ---", ps.stdout);
+  const conns = await sandbox.exec("ss -tn 2>&1 | head -20 || echo '(no ss)'");
+  lines.push("--- TCP connections ---", conns.stdout);
+  const lsof = await sandbox.exec("ls -la /proc/*/cwd 2>/dev/null | grep -v init | head -20");
+  lines.push("--- proc cwds ---", lsof.stdout);
   const tail = await sandbox.exec("tail -n 200 /tmp/start-hermes.log 2>&1 || echo '(no log)'");
   lines.push("--- /tmp/start-hermes.log (last 200) ---", tail.stdout);
   return c.text(lines.join("\n"));
