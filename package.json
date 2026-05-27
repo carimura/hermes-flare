@@ -1,0 +1,23 @@
+{
+  "name": "hermes-cloudflare",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Run Nous Research's Hermes Agent in a Cloudflare Sandbox container with R2-backed persistence",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:bare": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.7.20",
+    "hono": "^4.12.23"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.95.0"
+  }
+}

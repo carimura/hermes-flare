@@ -1,0 +1,63 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hermes-cloudflare",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // The Hermes container. cloudflare/sandbox base + our Dockerfile installs Hermes.
+  "containers": [
+    {
+      "class_name": "HermesSandbox",
+      "image": "./Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+
+  // Durable Object that wraps the container's lifecycle (provided by @cloudflare/sandbox).
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "HermesSandbox", "name": "HermesSandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["HermesSandbox"] }
+  ],
+
+  // R2 bucket for squashfs snapshots. The binding name BACKUP_BUCKET is the
+  // convention @cloudflare/sandbox expects.
+  "r2_buckets": [
+    { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-cloudflare-data" }
+  ],
+
+  // Wake the container periodically to give cron-scheduled tasks inside
+  // Hermes a chance to fire. Every minute is overkill for now; tune later.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+
+  // Universal non-secret defaults. Personal config (Slack member IDs,
+  // home channel) lives in `.env` (gitignored) and is applied via
+  // `wrangler deploy --var` by scripts/deploy.sh. Use `npm run deploy`.
+  "vars": {
+    // "true" → Hermes replies in a thread (Slack default).
+    // "false" → Hermes posts at the channel top level.
+    "SLACK_REPLY_IN_THREAD": "true",
+
+    // Container hibernation. "never" keeps it warm (faster, more expensive).
+    // Set "10m" / "1h" / "30s" to scale to zero when idle.
+    "SANDBOX_SLEEP_AFTER": "never"
+  }
+
+  // Secrets (set via `wrangler secret put`):
+  //   ANTHROPIC_API_KEY        — required, forwarded into the container
+  //   HERMES_GATEWAY_TOKEN     — required, protects /api and gateway access
+  //   SLACK_BOT_TOKEN          — Slack bot token (xoxb-...)
+  //   SLACK_APP_TOKEN          — Slack app-level token (xapp-... + connections:write)
+  //
+  //   (later, once Cloudflare Access is wired up:)
+  //   CF_ACCESS_TEAM_DOMAIN
+  //   CF_ACCESS_AUD
+}
