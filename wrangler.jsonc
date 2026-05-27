@@ -26,10 +26,10 @@
     { "tag": "v1", "new_sqlite_classes": ["HermesSandbox"] }
   ],
 
-  // R2 bucket for squashfs snapshots. The binding name BACKUP_BUCKET is the
-  // convention @cloudflare/sandbox expects.
+  // R2 bucket mounted into the container at /opt/data via sandbox.mountBucket().
+  // Holds Hermes' state directly — sessions, memories, skills, .env, config.yaml.
   "r2_buckets": [
-    { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-cloudflare-data" }
+    { "binding": "DATA_BUCKET", "bucket_name": "hermes-cloudflare-data" }
   ],
 
   // Wake the container periodically to give cron-scheduled tasks inside
@@ -50,14 +50,5 @@
     // Set "10m" / "1h" / "30s" to scale to zero when idle.
     "SANDBOX_SLEEP_AFTER": "never"
   }
-
-  // Secrets (set via `wrangler secret put`):
-  //   ANTHROPIC_API_KEY        — required, forwarded into the container
-  //   HERMES_GATEWAY_TOKEN     — required, protects /api and gateway access
-  //   SLACK_BOT_TOKEN          — Slack bot token (xoxb-...)
-  //   SLACK_APP_TOKEN          — Slack app-level token (xapp-... + connections:write)
-  //
-  //   (later, once Cloudflare Access is wired up:)
-  //   CF_ACCESS_TEAM_DOMAIN
-  //   CF_ACCESS_AUD
+  
 }

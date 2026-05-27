@@ -4,9 +4,9 @@ export interface Env {
   // The Sandbox Durable Object namespace, bound in wrangler.jsonc.
   HermesSandbox: DurableObjectNamespace<Sandbox>;
 
-  // R2 bucket where snapshots are stored. @cloudflare/sandbox expects
-  // this binding name.
-  BACKUP_BUCKET: R2Bucket;
+  // R2 bucket mounted into the container at /opt/data. Hermes' state
+  // (sessions, memories, skills, .env, config.yaml) lives directly here.
+  DATA_BUCKET: R2Bucket;
 
   // --- Secrets forwarded into the container at startup ---
   ANTHROPIC_API_KEY: string;

@@ -1,11 +1,18 @@
 import { Hono } from "hono";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { Env } from "./env";
-import { createSnapshot, restoreIfNeeded } from "./persistence";
 
 export { HermesSandbox } from "./sandbox";
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
+const MOUNT_PATH = "/opt/data";
+const MOUNT_BINDING = "DATA_BUCKET";
+
+// Per-isolate flag: was mountBucket already attempted? mountBucket is not
+// idempotent — calling twice throws InvalidMountPointError. The mount itself
+// lives on the container, not the Worker isolate, so on isolate restart we
+// just retry-and-swallow the "already mounted" error.
+let mountAttempted = false;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -23,13 +30,12 @@ function requireToken(c: { req: { query: (k: string) => string | undefined }; en
 app.get("/health", (c) => c.text("ok"));
 
 // ----------------------------------------------------------------------------
-// Status — wakes the container, ensures the gateway is running
+// Status — wakes the container, mounts R2 if needed, ensures the gateway runs
 // ----------------------------------------------------------------------------
 app.get("/api/status", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
   const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
-  await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
   const result = await ensureGateway(sandbox, c.env);
   return c.json(result);
 });
@@ -46,19 +52,14 @@ app.get("/api/logs", async (c) => {
   for (const p of procs) {
     lines.push(`${p.id}  ${p.status}  ${p.command}`);
   }
-  const ports = await sandbox.exec(
-    "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo '(no ss/netstat)'",
-  );
-  lines.push("--- listening ports ---", ports.stdout);
-  const config = await sandbox.exec("cat /home/hermes/.hermes/config.yaml 2>&1 || echo '(no config)'");
-  lines.push("--- config.yaml ---", config.stdout);
-  // Hermes also writes structured logs to ~/.hermes/logs/
-  const hermesLogs = await sandbox.exec(
-    "ls -t /home/hermes/.hermes/logs/ 2>/dev/null | head -3",
-  );
-  lines.push("--- ~/.hermes/logs/ (most recent) ---", hermesLogs.stdout);
+  const mounts = await sandbox.exec("mount | grep -E 'opt/data|fuse' 2>&1 || echo '(no fuse mounts)'");
+  lines.push("--- mounts ---", mounts.stdout);
+  const config = await sandbox.exec("cat /opt/data/config.yaml 2>&1 || echo '(no config)'");
+  lines.push("--- /opt/data/config.yaml ---", config.stdout);
+  const hermesLogs = await sandbox.exec("ls -t /opt/data/logs/ 2>/dev/null | head -3");
+  lines.push("--- /opt/data/logs/ (most recent) ---", hermesLogs.stdout);
   const latestHermesLog = await sandbox.exec(
-    "tail -n 100 \"$(ls -t /home/hermes/.hermes/logs/*.log 2>/dev/null | head -1)\" 2>&1 || echo '(none)'",
+    "tail -n 100 \"$(ls -t /opt/data/logs/*.log 2>/dev/null | head -1)\" 2>&1 || echo '(none)'",
   );
   lines.push("--- latest hermes log (last 100) ---", latestHermesLog.stdout);
   const tail = await sandbox.exec("tail -n 200 /tmp/start-hermes.log 2>&1 || echo '(no log)'");
@@ -87,15 +88,6 @@ app.post("/api/kill", async (c) => {
   return c.json({ ok: true });
 });
 
-// Snapshot /home/hermes to R2.
-app.post("/api/snapshot", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
-  const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
-  return c.json({ ok: true, handle });
-});
-
 // Slack uses Socket Mode (WebSocket from container to Slack) — no webhook
 // ingress needed. We don't proxy anything else either; the container is
 // reached only via the explicit /api/* routes above.
@@ -104,13 +96,12 @@ export default {
   fetch: app.fetch,
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Cron-driven keepalive: restore from R2 if needed, then make sure the
-    // Hermes gateway is running so Slack Socket Mode is connected and any
-    // cron-scheduled Hermes tasks have a chance to fire.
+    // Cron keepalive: mount R2 if needed, then make sure the Hermes gateway
+    // is running so Slack Socket Mode is connected and any cron-scheduled
+    // Hermes tasks have a chance to fire.
     ctx.waitUntil(
       (async () => {
         const sandbox = getSandbox(env.HermesSandbox, SANDBOX_INSTANCE);
-        await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
         await ensureGateway(sandbox, env);
       })(),
     );
@@ -122,20 +113,45 @@ export default {
 // ----------------------------------------------------------------------------
 
 /**
- * Ensure the Hermes gateway process is running.
- *
- * Detection is by process-list (not port probe) because Hermes uses Slack
- * Socket Mode — it never opens an HTTP listener on 8642. Liveness =
- * "is there a `hermes gateway run` process in 'running' or 'starting' status?"
+ * Mount the R2 bucket at /opt/data. Idempotent across requests — the SDK's
+ * mountBucket isn't, but we swallow "already mounted" errors so it acts that
+ * way at this layer.
+ */
+async function ensureMount(sandbox: Sandbox): Promise<void> {
+  if (mountAttempted) return;
+  try {
+    // Empty options → R2BindingMountBucketOptions (credential-less R2 mount
+    // via s3fs egress interception). For local `wrangler dev`, we'd need
+    // `{ localBucket: true }` — TODO once we wire up dev mode.
+    await sandbox.mountBucket(MOUNT_BINDING, MOUNT_PATH, {});
+    console.log(`[ensureMount] mounted ${MOUNT_BINDING} at ${MOUNT_PATH}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("InvalidMountPoint") || msg.toLowerCase().includes("already")) {
+      console.log(`[ensureMount] ${MOUNT_PATH} already mounted`);
+    } else {
+      throw err;
+    }
+  } finally {
+    mountAttempted = true;
+  }
+}
+
+/**
+ * Ensure the R2 mount is in place and the Hermes gateway process is running.
+ * Liveness detection is by process-list (not port probe) because Hermes uses
+ * Slack Socket Mode — it never opens an HTTP listener.
  */
 async function ensureGateway(
   sandbox: Sandbox,
   env: Env,
-): Promise<{ container: string; gateway_running: boolean; pid?: string }> {
+): Promise<{ container: string; mounted: boolean; gateway_running: boolean; pid?: string }> {
+  await ensureMount(sandbox);
+
   // Fast path: a gateway is already (or still) running.
   const existing = await findGatewayProcess(sandbox);
   if (existing) {
-    return { container: "running", gateway_running: true, pid: existing.id };
+    return { container: "running", mounted: true, gateway_running: true, pid: existing.id };
   }
 
   // Start the gateway via our script, capturing output to a known file so
@@ -144,6 +160,7 @@ async function ensureGateway(
   const envVars: Record<string, string> = {
     ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
     HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
+    HERMES_HOME: MOUNT_PATH,
     PYTHONUNBUFFERED: "1",
   };
   if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
@@ -163,7 +180,7 @@ async function ensureGateway(
     { env: envVars },
   );
   console.log(`[ensureGateway] pid=${proc.id} status=${proc.status}`);
-  return { container: "running", gateway_running: true, pid: proc.id };
+  return { container: "running", mounted: true, gateway_running: true, pid: proc.id };
 }
 
 /**
@@ -185,4 +202,3 @@ async function findGatewayProcess(
   }
   return null;
 }
-

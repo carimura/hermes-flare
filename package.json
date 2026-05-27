@@ -12,7 +12,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "^0.7.20",
+    "@cloudflare/sandbox": "^0.10.2",
     "hono": "^4.12.23"
   },
   "devDependencies": {

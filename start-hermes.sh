@@ -12,7 +12,7 @@
 # from inside the container.
 set -euo pipefail
 
-HERMES_HOME="${HERMES_HOME:-/home/hermes/.hermes}"
+HERMES_HOME="${HERMES_HOME:-/opt/data}"
 ENV_FILE="$HERMES_HOME/.env"
 CONFIG_FILE="$HERMES_HOME/config.yaml"
 GATEWAY_PORT="${HERMES_GATEWAY_PORT:-8642}"

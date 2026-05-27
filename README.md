@@ -1,46 +1,30 @@
-# hermes-cloudflare
+# Hermes-Cloudflare
 
-Run [Nous Research's Hermes Agent](https://hermes-agent.nousresearch.com/) inside a Cloudflare Sandbox container, with state persisted to R2 via the Sandbox SDK's snapshot API. Slack connects via Socket Mode (WebSocket out from the container) — no public webhook URL needs to be registered with Slack.
+Run [Nous Research's Hermes Agent](https://hermes-agent.nousresearch.com/) inside a Cloudflare Sandbox container with state persisted to R2 via the Sandbox SDK's FUSE-mount API.
 
-Architectural patterns lifted from [`cloudflare/moltworker`](https://github.com/cloudflare/moltworker) (Apache 2.0); code written from scratch.
+Motivated by [`cloudflare/moltworker`](https://github.com/cloudflare/moltworker).
 
 ## Architecture
 
+User Path:
 ```
-              Slack  ◀──── Socket Mode WebSocket ────▶
-                                                       ┌─────────────────────────┐
-                                                       │  Hermes Agent (Python)  │
-                                                       │  /home/hermes/.hermes   │ ◀── all stateful data
-                                                       └────────────┬────────────┘
-                                                                    │
-                                                       ┌─────────────────────────┐
-                                                       │  Cloudflare Sandbox     │
-                                                       │  container (DO-backed)  │
-                                                       └────────────┬────────────┘
-                                                                    │ Sandbox SDK
-                                                                    ▼
-   user ───── /api/* (token-gated) ─────▶  Cloudflare Worker (Hono router)
-                                                                    │
-                                                                    ▼
-                                                       R2 bucket (squashfs snapshots
-                                                       of /home/hermes, for persistence)
+  User ──▶ Slack ──(WebSocket)──▶ Hermes Agent (Running in container)
+```
+
+Operator Path:
+```
+  Operator ──▶ Worker /api/* ──▶ Sandbox Durable Object ──▶ Container
+                                                             ├─ Hermes Agent
+                                                             └─ /opt/data ⇄ R2 (mounted via FUSE)
 ```
 
 ## Requirements
 
-- **Cloudflare Workers Paid plan** ($5/mo — required for Sandbox containers).
+- **Cloudflare Workers**
 - **Anthropic API key** (Hermes uses Claude by default; other providers also supported).
-- **Slack workspace** where you can install apps.
+- **Slack workspace** (or Discord, etc.)
 
-Approximate runtime cost on top of the $5 plan, on a `standard-1` instance (1/2 vCPU, 4 GiB RAM, 8 GB disk):
 
-| Usage | Approx $/mo |
-|---|---|
-| Container always-on (24/7) | $34 |
-| Container active ~4 hrs/day | $10-12 |
-| Mostly idle, webhook-driven bursts | $5-7 |
-
-(If you don't need Cloudflare specifically, a $5/mo Hetzner/DO VPS running the official `nousresearch/hermes-agent` Docker image is the simpler, cheaper option.)
 
 ## Quick start
 
@@ -59,7 +43,7 @@ npx wrangler secret put HERMES_GATEWAY_TOKEN  # `openssl rand -hex 32`
 npx wrangler secret put SLACK_BOT_TOKEN       # xoxb-... (see "Slack setup")
 npx wrangler secret put SLACK_APP_TOKEN       # xapp-... (see "Slack setup")
 
-# 3. Create the R2 bucket for snapshots.
+# 3. Create the R2 bucket — mounted into the container as Hermes' state dir.
 npx wrangler r2 bucket create hermes-cloudflare-data
 
 # 4. Deploy.
@@ -76,8 +60,6 @@ curl "https://hermes-cloudflare.<your-subdomain>.workers.dev/api/status?token=$H
 First hit takes 1-2 minutes (cold container + Hermes gateway boot). After that, the cron trigger (every 5 min) keeps the gateway alive.
 
 ## Slack setup
-
-Hermes' Slack adapter uses **Socket Mode**, not webhooks — Hermes opens a WebSocket out to Slack. No public URL is registered with Slack.
 
 1. Generate the app manifest. Easiest: deploy first, then `curl /api/slack-manifest?token=...` to get one tailored to Hermes' current capabilities. The file `slack-manifest.json` checked into this repo is a reference snapshot.
 2. https://api.slack.com/apps → **Create New App** → **From an app manifest** → paste the JSON → Create.
@@ -123,22 +105,23 @@ All `/api/*` routes require `?token=$HERMES_GATEWAY_TOKEN`.
 | GET | `/api/status` | Wakes the container, ensures the Hermes gateway is running |
 | GET | `/api/logs` | Processes, listening ports, current config.yaml, recent Hermes logs |
 | GET | `/api/slack-manifest` | Generated Slack app manifest from `hermes slack manifest` |
-| POST | `/api/snapshot` | Snapshot `/home/hermes` to R2 |
 | POST | `/api/kill` | Kill the gateway process (cron will revive it within 5 min) |
 
-The cron trigger runs every 5 minutes, calling `restoreIfNeeded` + `ensureGateway` — so the gateway always comes back from a kill or container restart without manual intervention.
+The cron trigger runs every 5 minutes, calling `ensureGateway` — which also mounts R2 if needed. So the gateway always comes back from a kill or container restart without manual intervention.
 
 ## Persistence
 
-The Sandbox SDK has a `createBackup` / `restoreBackup` API that exports a container directory as a squashfs image to R2. We snapshot `/home/hermes` — Hermes' data dir, containing sessions, memories, learned skills, and config. On every cold container start, the Worker restores from R2 before serving the request. Without this, every restart would wipe Hermes' growing memory.
+The Sandbox SDK's `sandbox.mountBucket()` mounts an R2 bucket as a FUSE filesystem inside the container. We mount `DATA_BUCKET` at `/opt/data` and set `HERMES_HOME=/opt/data` so Hermes treats the mount as its state directory. Every write Hermes makes — new sessions, memory updates, skill files, config edits — goes directly to R2 in real time. No snapshots, no manual flushes, no data-loss window.
 
-Snapshot paths must live under `/home`, `/workspace`, `/tmp`, or `/var/tmp`. Hermes hardcodes `/opt/data` — we symlink that to `/home/hermes/.hermes` in the Dockerfile so Hermes' assumptions hold while the real data sits in a snapshot-eligible path.
+The Hermes Python install itself stays on the local container filesystem at `/home/hermes/.hermes/hermes-agent` — that's ephemeral but rebuilt from the image on every cold start, and keeping Python imports off FUSE matters for startup latency (each import would otherwise be an R2 GET).
+
+R2 is object storage with a FUSE shim. Per [Cloudflare's docs](https://developers.cloudflare.com/sandbox/guides/mount-buckets/): not POSIX-strict, no native-SSD performance, high-frequency writes to the same file may take a moment to propagate. Acceptable for an LLM agent's pace (single-digit writes per turn at most); something to revisit if Hermes' FTS5 session search misbehaves.
 
 ## Design notes
 
 ### Why `cloudflare/sandbox` base, not `nousresearch/hermes-agent`
 
-The Sandbox SDK's snapshot API requires the `cloudflare/sandbox` base image — it ships the FUSE machinery the snapshot system uses. We install Hermes on top of that base rather than starting from Nous's official image.
+The Sandbox SDK's `mountBucket` (and the rest of the lifecycle APIs) require the `cloudflare/sandbox` base image — it ships the FUSE machinery the mount system uses. We install Hermes on top of that base rather than starting from Nous's official image.
 
 ### Why the Worker starts Hermes, not a Dockerfile `CMD`
 
