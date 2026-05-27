@@ -7,7 +7,12 @@
 # together.
 # See: https://developers.cloudflare.com/sandbox/configuration/dockerfile/
 # =============================================================================
-FROM docker.io/cloudflare/sandbox:0.10.2-python
+FROM docker.io/cloudflare/sandbox:0.10.3
+
+# Lean variant — install Python 3 so Hermes' install.sh (uv + pip) works.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
 
 # Hermes requires Node 22; the base ships Node 20. Replace it.
 ENV NODE_VERSION=22.22.1
@@ -57,10 +62,12 @@ ENV PATH=/home/hermes/.local/bin:/home/hermes/.hermes/node/bin:$PATH
 RUN chmod -R a+rX /home/hermes
 
 # Startup script — writes config from env vars, then `hermes gateway run`.
+# Container ends as root (no final `USER hermes`) so the s3fs process the
+# SDK spawns for the R2 FUSE mount can open /dev/fuse. Hermes itself accepts
+# running as root when HERMES_ALLOW_ROOT_GATEWAY=1 is set (see Worker env).
 USER root
 COPY start-hermes.sh /usr/local/bin/start-hermes.sh
 RUN chmod +x /usr/local/bin/start-hermes.sh
-USER hermes
 
 # Hermes gateway listens here. Started by the Worker via startProcess(),
 # not by a Dockerfile CMD — that way we get stdout/stderr capture.

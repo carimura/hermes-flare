@@ -1,8 +1,13 @@
 import { Hono } from "hono";
-import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { getSandbox, type Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 import type { Env } from "./env";
 
 export { HermesSandbox } from "./sandbox";
+// Required by @cloudflare/sandbox for R2 binding mounts — the DO runtime
+// looks up ctx.exports.ContainerProxy to route egress-intercepted s3fs
+// traffic back through the Worker. Import-then-export prevents the bundler
+// from tree-shaking the value.
+export { ContainerProxy };
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
 const MOUNT_PATH = "/opt/data";
@@ -52,8 +57,10 @@ app.get("/api/logs", async (c) => {
   for (const p of procs) {
     lines.push(`${p.id}  ${p.status}  ${p.command}`);
   }
-  const mounts = await sandbox.exec("mount | grep -E 'opt/data|fuse' 2>&1 || echo '(no fuse mounts)'");
-  lines.push("--- mounts ---", mounts.stdout);
+  const mounts = await sandbox.exec("mount 2>&1 | grep -E 'data|fuse|s3fs' || echo '(no match)'; echo '---'; df -h /opt/data 2>&1 || true");
+  lines.push("--- mounts + df ---", mounts.stdout);
+  const env = await sandbox.exec("cat /opt/data/.env 2>&1 | sed -E 's/(=).+/\\1[redacted]/' || echo '(no .env)'");
+  lines.push("--- /opt/data/.env (values redacted) ---", env.stdout);
   const config = await sandbox.exec("cat /opt/data/config.yaml 2>&1 || echo '(no config)'");
   lines.push("--- /opt/data/config.yaml ---", config.stdout);
   const hermesLogs = await sandbox.exec("ls -t /opt/data/logs/ 2>/dev/null | head -3");
@@ -120,20 +127,25 @@ export default {
 async function ensureMount(sandbox: Sandbox): Promise<void> {
   if (mountAttempted) return;
   try {
-    // Empty options → R2BindingMountBucketOptions (credential-less R2 mount
-    // via s3fs egress interception). For local `wrangler dev`, we'd need
-    // `{ localBucket: true }` — TODO once we wire up dev mode.
-    await sandbox.mountBucket(MOUNT_BINDING, MOUNT_PATH, {});
+    // R2BindingMountBucketOptions (credential-less R2 mount via s3fs egress
+    // interception). `nonempty` lets s3fs mount over a /opt/data that may
+    // contain leftover local files from pre-mount boots; once mounted, the
+    // local files are hidden and all writes go to R2.
+    await sandbox.mountBucket(MOUNT_BINDING, MOUNT_PATH, {
+      s3fsOptions: ["nonempty"],
+    });
     console.log(`[ensureMount] mounted ${MOUNT_BINDING} at ${MOUNT_PATH}`);
+    mountAttempted = true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("InvalidMountPoint") || msg.toLowerCase().includes("already")) {
       console.log(`[ensureMount] ${MOUNT_PATH} already mounted`);
-    } else {
-      throw err;
+      mountAttempted = true;
+      return;
     }
-  } finally {
-    mountAttempted = true;
+    // DON'T set mountAttempted on unknown errors — retry on the next call.
+    console.error(`[ensureMount] mount failed:`, err);
+    throw err;
   }
 }
 
@@ -161,6 +173,9 @@ async function ensureGateway(
     ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
     HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
     HERMES_HOME: MOUNT_PATH,
+    // Container runs as root (required for FUSE mount); Hermes refuses to
+    // start its gateway as root without this explicit opt-in.
+    HERMES_ALLOW_ROOT_GATEWAY: "1",
     PYTHONUNBUFFERED: "1",
   };
   if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
