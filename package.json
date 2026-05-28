@@ -1,5 +1,5 @@
 {
-  "name": "hermes-cloudflare",
+  "name": "hermes-flare",
   "version": "0.0.1",
   "private": true,
   "description": "Run Nous Research's Hermes Agent in a Cloudflare Sandbox container with R2-backed persistence",

@@ -1,17 +1,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "hermes-cloudflare",
+  "name": "hermes-flare",
   "main": "src/index.ts",
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
   // Two container classes:
-  //   HermesSandbox — long-lived, runs the Hermes agent itself
-  //   ExecSandbox   — isolated sandbox where Hermes-issued shell commands run
+  //   Agent — long-lived, runs the Hermes agent itself
+  //   Exec  — isolated sandbox where Hermes-issued shell commands run
   "containers": [
     {
-      "class_name": "HermesSandbox",
+      "class_name": "Agent",
       "image": "./Dockerfile",
       "instance_type": "standard-1",
       "max_instances": 1,
@@ -19,7 +19,7 @@
       "ssh": { "enabled": true }
     },
     {
-      "class_name": "ExecSandbox",
+      "class_name": "Exec",
       "image": "./Dockerfile.exec",
       "instance_type": "lite",
       "max_instances": 1,
@@ -30,19 +30,21 @@
   // Durable Object bindings (provided by @cloudflare/sandbox).
   "durable_objects": {
     "bindings": [
-      { "class_name": "HermesSandbox", "name": "HermesSandbox" },
-      { "class_name": "ExecSandbox", "name": "ExecSandbox" }
+      { "class_name": "Agent", "name": "Agent" },
+      { "class_name": "Exec", "name": "Exec" }
     ]
   },
+  // Fresh migration: this Worker (`hermes-flare`) is new; nothing to migrate
+  // from. The old Worker (`hermes-cloudflare`) keeps its own state until
+  // manually deleted via `wrangler delete`.
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["HermesSandbox"] },
-    { "tag": "v2", "new_sqlite_classes": ["ExecSandbox"] }
+    { "tag": "v1", "new_sqlite_classes": ["Agent", "Exec"] }
   ],
 
   // R2 bucket for squashfs snapshots. The binding name BACKUP_BUCKET is the
   // convention @cloudflare/sandbox expects.
   "r2_buckets": [
-    { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-cloudflare-data" }
+    { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-flare-data" }
   ],
 
   // Wake the container periodically to give cron-scheduled tasks inside

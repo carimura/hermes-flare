@@ -68,7 +68,7 @@ RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
 ENV PATH=/home/hermes/.local/bin:/opt/hermes-install/node/bin:$PATH
 
 # ---- Custom terminal backend: cloudflare_sandbox ----
-# Routes Hermes-issued shell commands out to a separate ExecSandbox container
+# Routes Hermes-issued shell commands out to a separate Exec container
 # via the parent Worker. The plugin file lives alongside the other backends.
 # terminal_tool.py's _create_environment() is hardcoded if/elif over env_type,
 # so we patch it with sed to add an `elif env_type == "cloudflare_sandbox"`

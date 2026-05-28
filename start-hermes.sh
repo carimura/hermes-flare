@@ -61,11 +61,11 @@ echo "[start-hermes] wrote $ENV_FILE"
     echo "    extra:"
     echo "      reply_in_thread: ${SLACK_REPLY_IN_THREAD:-true}"
   fi
-  # ---- Terminal backend: route shell commands to ExecSandbox ----
+  # ---- Terminal backend: route shell commands to the Exec container ----
   # The cloudflare_sandbox backend (tools/environments/cloudflare_sandbox.py)
   # is injected into the Hermes install by the Dockerfile. It POSTs each
   # command back to /api/sandbox/exec on the Worker, which forwards into
-  # the ExecSandbox container.
+  # the Exec sandbox container.
   echo "terminal:"
   echo "  backend: cloudflare_sandbox"
   echo "  cwd: /workspace"

@@ -1,4 +1,4 @@
-# hermes-cloudflare
+# hermes-flare
 
 Run [Nous Research's Hermes Agent](https://hermes-agent.nousresearch.com/) inside a Cloudflare Sandbox container, with state persisted to R2 via the Sandbox SDK's snapshot API. Slack connects via Socket Mode (WebSocket out from the container) — no public webhook URL needs to be registered with Slack.
 
@@ -45,8 +45,8 @@ Approximate runtime cost on top of the $5 plan, on a `standard-1` instance (1/2 
 ## Quick start
 
 ```sh
-git clone https://github.com/carimura/hermes-cloudflare
-cd hermes-cloudflare
+git clone https://github.com/carimura/hermes-flare
+cd hermes-flare
 npm install
 
 # 1. Personal IDs go in .env (gitignored).
@@ -60,7 +60,7 @@ npx wrangler secret put SLACK_BOT_TOKEN       # xoxb-... (see "Slack setup")
 npx wrangler secret put SLACK_APP_TOKEN       # xapp-... (see "Slack setup")
 
 # 3. Create the R2 bucket for snapshots.
-npx wrangler r2 bucket create hermes-cloudflare-data
+npx wrangler r2 bucket create hermes-flare-data
 
 # 4. Deploy.
 npm run deploy
@@ -69,7 +69,7 @@ npm run deploy
 First deploy builds the container image (~90s). The container won't actually start until the first request hits the Worker. Bootstrap it:
 
 ```sh
-curl "https://hermes-cloudflare.<your-subdomain>.workers.dev/api/status?token=$HERMES_GATEWAY_TOKEN"
+curl "https://hermes-flare.<your-subdomain>.workers.dev/api/status?token=$HERMES_GATEWAY_TOKEN"
 # → {"container":"running","gateway_running":true,"pid":"proc_..."}
 ```
 
@@ -79,12 +79,12 @@ First hit takes 1-2 minutes (cold container + Hermes gateway boot). After that, 
 
 If you want `POST /api/snapshot` to work, you also need R2 API credentials (the Sandbox SDK uses presigned URLs to write the squashfs blob):
 
-1. Cloudflare dashboard → **R2** → **Manage R2 API Tokens** → **Create API Token** with **Object Read & Write** scoped to the `hermes-cloudflare-data` bucket.
+1. Cloudflare dashboard → **R2** → **Manage R2 API Tokens** → **Create API Token** with **Object Read & Write** scoped to the `hermes-flare-data` bucket.
 2. Copy the **Access Key ID** + **Secret Access Key**.
 3. Push 4 secrets:
    ```sh
    echo "$CF_ACCOUNT_ID"          | npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
-   echo "hermes-cloudflare-data"  | npx wrangler secret put BACKUP_BUCKET_NAME
+   echo "hermes-flare-data"  | npx wrangler secret put BACKUP_BUCKET_NAME
    npx wrangler secret put R2_ACCESS_KEY_ID       # paste Access Key ID
    npx wrangler secret put R2_SECRET_ACCESS_KEY   # paste Secret Access Key
    ```
@@ -99,7 +99,7 @@ If you want `POST /api/snapshot` to work, you also need R2 API credentials (the 
 3. Runs `npx wrangler deploy ...`.
 
 Wrangler then:
-- Builds two container images locally: `Dockerfile` (Hermes) and `Dockerfile.exec` (ExecSandbox).
+- Builds two container images locally: `Dockerfile` (Hermes) and `Dockerfile.exec` (Exec).
 - Pushes them to `registry.cloudflare.com`.
 - Updates the Worker bundle + container application image bindings.
 
@@ -112,7 +112,7 @@ Wrangler then:
 **For changes to the Hermes container** (`Dockerfile`, `start-hermes.sh`): the *Worker* updates immediately, but the running Hermes container persists with its **original image**. The new image won't be used until the container instance restarts (hibernation, OOM, manual delete). To force a fresh process inside the same container (picks up new env vars but NOT a new container image):
 
 ```sh
-curl -X POST "https://hermes-cloudflare.<your>.workers.dev/api/kill?token=$HERMES_GATEWAY_TOKEN"
+curl -X POST "https://hermes-flare.<your>.workers.dev/api/kill?token=$HERMES_GATEWAY_TOKEN"
 ```
 
 The cron trigger (every 5 min) or the next `/api/status` will respawn the gateway.
@@ -157,7 +157,7 @@ DM the bot in Slack — first message wakes the container (1-2 min), subsequent 
 | `SLACK_BOT_TOKEN` | yes (Slack) | `xoxb-...` |
 | `SLACK_APP_TOKEN` | yes (Slack) | `xapp-...` with `connections:write` scope |
 | `CLOUDFLARE_ACCOUNT_ID` | snapshots only | Your CF account ID; required by the SDK for `createBackup` |
-| `BACKUP_BUCKET_NAME` | snapshots only | R2 bucket name (`hermes-cloudflare-data`) |
+| `BACKUP_BUCKET_NAME` | snapshots only | R2 bucket name (`hermes-flare-data`) |
 | `R2_ACCESS_KEY_ID` | snapshots only | From an R2 API token with Object Read/Write |
 | `R2_SECRET_ACCESS_KEY` | snapshots only | From the same R2 API token |
 | `TELEGRAM_BOT_TOKEN` | optional | Reserved for future Telegram support |
@@ -227,7 +227,7 @@ npm run dev
 ## Project layout
 
 ```
-hermes-cloudflare/
+hermes-flare/
 ├─ README.md
 ├─ LICENSE                  # Apache 2.0
 ├─ Dockerfile               # cloudflare/sandbox:0.7.20 + Hermes install
@@ -242,7 +242,7 @@ hermes-cloudflare/
 └─ src/
    ├─ index.ts              # Hono router, Worker entry, ensureGateway
    ├─ env.ts                # bindings type
-   ├─ sandbox.ts            # exports HermesSandbox = SDK Sandbox class
+   ├─ sandbox.ts            # exports Agent = SDK Sandbox class
    └─ persistence.ts        # createSnapshot / restoreIfNeeded
 ```
 

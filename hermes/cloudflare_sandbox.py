@@ -1,13 +1,13 @@
 """Cloudflare Sandbox execution environment for Hermes Agent.
 
-Routes commands out of the long-lived HermesSandbox container, back through
-the parent Worker (POST /api/sandbox/exec), and into a separate ExecSandbox
-container managed by the same Worker. The Worker's Sandbox SDK actually
-spawns the command — this plugin is just an HTTP shim that adapts the JSON
-response to Hermes' BaseEnvironment.ProcessHandle protocol.
+Routes commands out of the long-lived Agent container, back through the
+parent Worker (POST /api/sandbox/exec), and into a separate Exec container
+managed by the same Worker. The Worker's Sandbox SDK actually spawns the
+command — this plugin is just an HTTP shim that adapts the JSON response
+to Hermes' BaseEnvironment.ProcessHandle protocol.
 
 Required env vars (passed from the Worker via startProcess() env):
-    CLOUDFLARE_WORKER_URL   e.g. https://hermes-cloudflare.<sub>.workers.dev
+    CLOUDFLARE_WORKER_URL   e.g. https://hermes-flare.<sub>.workers.dev
     HERMES_GATEWAY_TOKEN    same token gating /api/*
 
 The plugin is registered by patching tools/terminal_tool.py at Docker build
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class CloudflareSandboxEnvironment(BaseEnvironment):
-    """Run commands in a Cloudflare ExecSandbox container via the Worker."""
+    """Run commands in a Cloudflare Exec sandbox container via the Worker."""
 
-    # ExecSandbox executes a single command per call — no persistent shell —
+    # Exec executes a single command per call — no persistent shell —
     # so we don't need stdin pipes, but heredoc is the only way to deliver
     # multi-line stdin alongside the command in our JSON envelope.
     _stdin_mode = "heredoc"
@@ -103,7 +103,7 @@ class CloudflareSandboxEnvironment(BaseEnvironment):
                 data=payload,
                 headers={
                     "content-type": "application/json",
-                    "user-agent": "hermes-cloudflare-plugin/1.0",
+                    "user-agent": "hermes-flare-plugin/1.0",
                 },
                 method="POST",
             )
@@ -129,6 +129,6 @@ class CloudflareSandboxEnvironment(BaseEnvironment):
         return _ThreadedProcessHandle(exec_fn, cancel_fn=None)
 
     def cleanup(self):
-        # The Worker owns ExecSandbox lifecycle (single shared instance for
+        # The Worker owns Exec lifecycle (single shared instance for
         # Stage 1). Nothing to release from the client side.
         pass

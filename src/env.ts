@@ -2,11 +2,11 @@ import type { Sandbox } from "@cloudflare/sandbox";
 
 export interface Env {
   // The Sandbox Durable Object namespace, bound in wrangler.jsonc.
-  HermesSandbox: DurableObjectNamespace<Sandbox>;
+  Agent: DurableObjectNamespace<Sandbox>;
 
   // Isolated sandbox where Hermes-issued shell commands run.
   // Stage 1: single shared instance. Stage 2: per-command instances.
-  ExecSandbox: DurableObjectNamespace<Sandbox>;
+  Exec: DurableObjectNamespace<Sandbox>;
 
   // R2 bucket where snapshots are stored. @cloudflare/sandbox expects
   // this binding name.

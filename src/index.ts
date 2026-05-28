@@ -3,7 +3,7 @@ import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { Env } from "./env";
 import { createSnapshot, restoreIfNeeded, signalRestoreNeeded } from "./persistence";
 
-export { HermesSandbox, ExecSandbox } from "./sandbox";
+export { Agent, Exec } from "./sandbox";
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
 
@@ -28,7 +28,7 @@ app.get("/health", (c) => c.text("ok"));
 app.get("/api/status", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
   const result = await ensureGateway(sandbox, c.env);
   return c.json(result);
@@ -40,7 +40,7 @@ app.get("/api/status", async (c) => {
 app.get("/api/logs", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   const procs = await sandbox.listProcesses();
   const lines: string[] = [`--- processes (${procs.length}) ---`];
   for (const p of procs) {
@@ -72,7 +72,7 @@ app.get("/api/logs", async (c) => {
 app.get("/api/slack-manifest", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   const result = await sandbox.exec("hermes slack manifest 2>&1");
   return c.text(result.stdout, 200, { "content-type": "text/plain" });
 });
@@ -82,7 +82,7 @@ app.get("/api/slack-manifest", async (c) => {
 app.post("/api/kill", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   await sandbox.exec(
     "pkill -9 -f 'hermes gateway' 2>/dev/null; pkill -9 -f start-hermes 2>/dev/null; true",
   );
@@ -96,7 +96,7 @@ app.post("/api/kill", async (c) => {
 app.post("/api/snapshot", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   const t0 = Date.now();
   try {
     const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
@@ -107,9 +107,9 @@ app.post("/api/snapshot", async (c) => {
   }
 });
 
-// Run a shell command inside the long-lived HermesSandbox. Token-gated.
-// Mirrors `/api/sandbox/exec` for ExecSandbox; useful for diagnostics and
-// for testing snapshot/restore round-trips.
+// Run a shell command inside the long-lived Agent container. Token-gated.
+// Mirrors `/api/sandbox/exec` for Exec; useful for diagnostics and for
+// testing snapshot/restore round-trips.
 app.post("/api/hermes/exec", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
@@ -118,7 +118,7 @@ app.post("/api/hermes/exec", async (c) => {
   if (typeof body.command !== "string" || !body.command) {
     return c.json({ error: "missing or invalid 'command' (string)" }, 400);
   }
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   const result = await sandbox.exec(body.command);
   return c.json({
     success: result.success,
@@ -135,7 +135,7 @@ app.post("/api/hermes/exec", async (c) => {
 app.post("/api/restore", async (c) => {
   const denied = requireToken(c);
   if (denied) return denied;
-  const sandbox = getSandbox(c.env.HermesSandbox, SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
   const t0 = Date.now();
   try {
     await signalRestoreNeeded(c.env.BACKUP_BUCKET);
@@ -152,7 +152,7 @@ app.post("/api/restore", async (c) => {
 // This is the Worker side of the Hermes "cloudflare_sandbox" terminal backend
 // (see tools/environments/cloudflare_sandbox.py inside the Hermes container).
 //
-// Stage 1: single shared ExecSandbox instance ("exec"), reused across commands.
+// Stage 1: single shared Exec instance ("exec"), reused across commands.
 // Stage 2 (future): per-command unique-ID sandboxes for full isolation.
 // ----------------------------------------------------------------------------
 const EXEC_SANDBOX_INSTANCE = "exec";
@@ -171,7 +171,7 @@ app.post("/api/sandbox/exec", async (c) => {
     return c.json({ error: "missing or invalid 'command' (string)" }, 400);
   }
 
-  const sandbox = getSandbox(c.env.ExecSandbox, EXEC_SANDBOX_INSTANCE);
+  const sandbox = getSandbox(c.env.Exec, EXEC_SANDBOX_INSTANCE);
   try {
     const result = await sandbox.exec(body.command, {
       cwd: typeof body.cwd === "string" ? body.cwd : undefined,
@@ -206,7 +206,7 @@ export default {
     // cron-scheduled Hermes tasks have a chance to fire.
     ctx.waitUntil(
       (async () => {
-        const sandbox = getSandbox(env.HermesSandbox, SANDBOX_INSTANCE);
+        const sandbox = getSandbox(env.Agent, SANDBOX_INSTANCE);
         await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
         await ensureGateway(sandbox, env);
       })(),
@@ -254,7 +254,7 @@ async function ensureGateway(
   if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
   if (env.DISCORD_BOT_TOKEN) envVars.DISCORD_BOT_TOKEN = env.DISCORD_BOT_TOKEN;
 
-  // ---- Terminal backend: route Hermes-issued shell commands to ExecSandbox ----
+  // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
   // The cloudflare_sandbox plugin (Dockerfile) POSTs back to /api/sandbox/exec.
   if (env.WORKER_PUBLIC_URL) {
     envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
