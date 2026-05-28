@@ -9,9 +9,18 @@ const SANDBOX_INSTANCE = "hermes"; // single-instance for now
 
 const app = new Hono<{ Bindings: Env }>();
 
-/** Every /api/* route gates on HERMES_GATEWAY_TOKEN passed as ?token=... */
+/** Every /api/* route gates on HERMES_GATEWAY_TOKEN passed as ?token=...
+ *
+ * Fail-closed on a missing/empty configured token: without this check, an
+ * unset secret would compare `undefined === undefined` against a request
+ * that omits ?token=, letting anyone in. (#12)
+ */
 function requireToken(c: { req: { query: (k: string) => string | undefined }; env: Env }): Response | null {
-  if (c.req.query("token") !== c.env.HERMES_GATEWAY_TOKEN) {
+  const expected = c.env.HERMES_GATEWAY_TOKEN;
+  if (typeof expected !== "string" || expected.length === 0) {
+    return new Response("HERMES_GATEWAY_TOKEN is not configured on this Worker", { status: 503 });
+  }
+  if (c.req.query("token") !== expected) {
     return new Response("forbidden", { status: 403 });
   }
   return null;
@@ -225,6 +234,18 @@ export default {
  * Socket Mode — it never opens an HTTP listener on 8642. Liveness =
  * "is there a `hermes gateway run` process in 'running' or 'starting' status?"
  */
+/**
+ * In-flight gateway-start promise, used as a per-isolate mutex.
+ *
+ * Without this, /api/status and the scheduled cron handler can both call
+ * ensureGateway concurrently: both see no gateway running, both call
+ * startProcess, two start-hermes.sh processes race for port 8642 and
+ * config.yaml. (#19) Storing the in-flight Promise here serializes
+ * concurrent callers within the same isolate; cross-isolate races are
+ * still possible but rare and Hermes' own gateway.lock catches them.
+ */
+let gatewayStartInFlight: Promise<{ container: string; gateway_running: boolean; pid?: string }> | null = null;
+
 async function ensureGateway(
   sandbox: Sandbox,
   env: Env,
@@ -235,43 +256,64 @@ async function ensureGateway(
     return { container: "running", gateway_running: true, pid: existing.id };
   }
 
-  // Start the gateway via our script, capturing output to a known file so
-  // /api/logs can surface it. PYTHONUNBUFFERED=1 prevents Hermes (Python)
-  // from buffering its stdout when redirected to a file.
-  const envVars: Record<string, string> = {
-    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
-    HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
-    // Container runs as root (so mksquashfs can run for snapshots); Hermes
-    // refuses to start its gateway as root without this explicit opt-in.
-    HERMES_ALLOW_ROOT_GATEWAY: "1",
-    PYTHONUNBUFFERED: "1",
-  };
-  if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
-  if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
-  if (env.SLACK_ALLOWED_USERS) envVars.SLACK_ALLOWED_USERS = env.SLACK_ALLOWED_USERS;
-  if (env.SLACK_REPLY_IN_THREAD) envVars.SLACK_REPLY_IN_THREAD = env.SLACK_REPLY_IN_THREAD;
-  if (env.SLACK_HOME_CHANNEL) envVars.SLACK_HOME_CHANNEL = env.SLACK_HOME_CHANNEL;
-  if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
-  if (env.DISCORD_BOT_TOKEN) envVars.DISCORD_BOT_TOKEN = env.DISCORD_BOT_TOKEN;
-
-  // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
-  // The cloudflare_sandbox plugin (Dockerfile) POSTs back to /api/sandbox/exec.
-  if (env.WORKER_PUBLIC_URL) {
-    envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
-    envVars.TERMINAL_ENV = "cloudflare_sandbox";
-    envVars.TERMINAL_CWD = "/workspace";
+  // Slow path: at most one concurrent start per isolate.
+  if (gatewayStartInFlight) {
+    return gatewayStartInFlight;
   }
 
-  // Truncate the log between runs so stale output doesn't confuse debugging.
-  await sandbox.exec("rm -f /tmp/start-hermes.log; true");
+  gatewayStartInFlight = (async () => {
+    try {
+      // Re-check inside the lock: a concurrent caller may have already
+      // started one between the outer fast-path check and our acquiring
+      // the lock here.
+      const recheck = await findGatewayProcess(sandbox);
+      if (recheck) {
+        return { container: "running", gateway_running: true, pid: recheck.id };
+      }
 
-  console.log("[ensureGateway] starting gateway process");
-  const proc = await sandbox.startProcess(
-    "/usr/local/bin/start-hermes.sh > /tmp/start-hermes.log 2>&1",
-    { env: envVars },
-  );
-  console.log(`[ensureGateway] pid=${proc.id} status=${proc.status}`);
-  return { container: "running", gateway_running: true, pid: proc.id };
+      // Start the gateway via our script, capturing output to a known
+      // file so /api/logs can surface it. PYTHONUNBUFFERED=1 prevents
+      // Hermes (Python) from buffering its stdout when redirected.
+      const envVars: Record<string, string> = {
+        ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
+        HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
+        // Container runs as root (so mksquashfs can run for snapshots);
+        // Hermes refuses to start its gateway as root without this opt-in.
+        HERMES_ALLOW_ROOT_GATEWAY: "1",
+        PYTHONUNBUFFERED: "1",
+      };
+      if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
+      if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
+      if (env.SLACK_ALLOWED_USERS) envVars.SLACK_ALLOWED_USERS = env.SLACK_ALLOWED_USERS;
+      if (env.SLACK_REPLY_IN_THREAD) envVars.SLACK_REPLY_IN_THREAD = env.SLACK_REPLY_IN_THREAD;
+      if (env.SLACK_HOME_CHANNEL) envVars.SLACK_HOME_CHANNEL = env.SLACK_HOME_CHANNEL;
+      if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
+      if (env.DISCORD_BOT_TOKEN) envVars.DISCORD_BOT_TOKEN = env.DISCORD_BOT_TOKEN;
+
+      // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
+      // The cloudflare_sandbox plugin POSTs back to /api/sandbox/exec.
+      if (env.WORKER_PUBLIC_URL) {
+        envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
+        envVars.TERMINAL_ENV = "cloudflare_sandbox";
+        envVars.TERMINAL_CWD = "/workspace";
+      }
+
+      // Truncate the log between runs so stale output doesn't confuse debugging.
+      await sandbox.exec("rm -f /tmp/start-hermes.log; true");
+
+      console.log("[ensureGateway] starting gateway process");
+      const proc = await sandbox.startProcess(
+        "/usr/local/bin/start-hermes.sh > /tmp/start-hermes.log 2>&1",
+        { env: envVars },
+      );
+      console.log(`[ensureGateway] pid=${proc.id} status=${proc.status}`);
+      return { container: "running", gateway_running: true, pid: proc.id };
+    } finally {
+      gatewayStartInFlight = null;
+    }
+  })();
+
+  return gatewayStartInFlight;
 }
 
 /**
