@@ -4,6 +4,10 @@ export interface Env {
   // The Sandbox Durable Object namespace, bound in wrangler.jsonc.
   HermesSandbox: DurableObjectNamespace<Sandbox>;
 
+  // Isolated sandbox where Hermes-issued shell commands run.
+  // Stage 1: single shared instance. Stage 2: per-command instances.
+  ExecSandbox: DurableObjectNamespace<Sandbox>;
+
   // R2 bucket where snapshots are stored. @cloudflare/sandbox expects
   // this binding name.
   BACKUP_BUCKET: R2Bucket;
@@ -30,4 +34,12 @@ export interface Env {
   // --- Container behavior ---
   /** "never" (default) keeps the container warm. Set "10m", "1h", etc. to hibernate. */
   SANDBOX_SLEEP_AFTER?: string;
+
+  /**
+   * Public URL of THIS Worker, used by the Hermes container's
+   * cloudflare_sandbox backend to POST commands back to /api/sandbox/exec.
+   * Worker has no built-in self-URL API, so we plumb it through as a var
+   * from .env (scripts/deploy.sh).
+   */
+  WORKER_PUBLIC_URL?: string;
 }

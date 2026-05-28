@@ -6,24 +6,37 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
-  // The Hermes container. cloudflare/sandbox base + our Dockerfile installs Hermes.
+  // Two container classes:
+  //   HermesSandbox — long-lived, runs the Hermes agent itself
+  //   ExecSandbox   — isolated sandbox where Hermes-issued shell commands run
   "containers": [
     {
       "class_name": "HermesSandbox",
       "image": "./Dockerfile",
       "instance_type": "standard-1",
-      "max_instances": 1
+      "max_instances": 1,
+      // `wrangler containers ssh <container-id>` for direct shell access.
+      "ssh": { "enabled": true }
+    },
+    {
+      "class_name": "ExecSandbox",
+      "image": "./Dockerfile.exec",
+      "instance_type": "lite",
+      "max_instances": 1,
+      "ssh": { "enabled": true }
     }
   ],
 
-  // Durable Object that wraps the container's lifecycle (provided by @cloudflare/sandbox).
+  // Durable Object bindings (provided by @cloudflare/sandbox).
   "durable_objects": {
     "bindings": [
-      { "class_name": "HermesSandbox", "name": "HermesSandbox" }
+      { "class_name": "HermesSandbox", "name": "HermesSandbox" },
+      { "class_name": "ExecSandbox", "name": "ExecSandbox" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["HermesSandbox"] }
+    { "tag": "v1", "new_sqlite_classes": ["HermesSandbox"] },
+    { "tag": "v2", "new_sqlite_classes": ["ExecSandbox"] }
   ],
 
   // R2 bucket for squashfs snapshots. The binding name BACKUP_BUCKET is the

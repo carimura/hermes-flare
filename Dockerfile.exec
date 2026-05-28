@@ -1,0 +1,22 @@
+# =============================================================================
+# Exec Sandbox — where Hermes-issued shell commands run
+# =============================================================================
+# Minimal Linux env with Python + Node + bash + common build tools. NO Hermes
+# install. Reachable from the Worker via the Cloudflare Sandbox SDK; commands
+# come in over `sandbox.exec()` and write/read at /workspace.
+# =============================================================================
+FROM docker.io/cloudflare/sandbox:0.7.20
+
+# Python 3 (cloudflare/sandbox base is lean — Node 20 + bash + curl + git only).
+# pip + venv so the agent can install packages within a sandboxed exec.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-pip python3-venv \
+         build-essential \
+         jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Where the agent does its work. Writable by anyone (1777) so commands can
+# create files regardless of which user the SDK spawns them as.
+RUN mkdir -p /workspace && chmod 1777 /workspace
+WORKDIR /workspace

@@ -75,6 +75,63 @@ curl "https://hermes-cloudflare.<your-subdomain>.workers.dev/api/status?token=$H
 
 First hit takes 1-2 minutes (cold container + Hermes gateway boot). After that, the cron trigger (every 5 min) keeps the gateway alive.
 
+### Optional: enable snapshots
+
+If you want `POST /api/snapshot` to work, you also need R2 API credentials (the Sandbox SDK uses presigned URLs to write the squashfs blob):
+
+1. Cloudflare dashboard → **R2** → **Manage R2 API Tokens** → **Create API Token** with **Object Read & Write** scoped to the `hermes-cloudflare-data` bucket.
+2. Copy the **Access Key ID** + **Secret Access Key**.
+3. Push 4 secrets:
+   ```sh
+   echo "$CF_ACCOUNT_ID"          | npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+   echo "hermes-cloudflare-data"  | npx wrangler secret put BACKUP_BUCKET_NAME
+   npx wrangler secret put R2_ACCESS_KEY_ID       # paste Access Key ID
+   npx wrangler secret put R2_SECRET_ACCESS_KEY   # paste Secret Access Key
+   ```
+4. `npm run deploy` once more so the new secrets are bound.
+
+## Deploying
+
+`npm run deploy` is the one command. Under the hood it's `bash scripts/deploy.sh`:
+
+1. Reads `.env` (gitignored, see `.env.example`) — your personal IDs like `SLACK_ALLOWED_USERS`.
+2. Builds `--var KEY:VAL` args from those values.
+3. Runs `npx wrangler deploy ...`.
+
+Wrangler then:
+- Builds two container images locally: `Dockerfile` (Hermes) and `Dockerfile.exec` (ExecSandbox).
+- Pushes them to `registry.cloudflare.com`.
+- Updates the Worker bundle + container application image bindings.
+
+`npm run deploy:bare` bypasses the script and runs `wrangler deploy` directly — useful if you want to skip `.env` injection.
+
+### After deploying
+
+**For Worker-only changes** (routes, env-var pass-through): the Worker hot-swaps on deploy. No further action needed.
+
+**For changes to the Hermes container** (`Dockerfile`, `start-hermes.sh`): the *Worker* updates immediately, but the running Hermes container persists with its **original image**. The new image won't be used until the container instance restarts (hibernation, OOM, manual delete). To force a fresh process inside the same container (picks up new env vars but NOT a new container image):
+
+```sh
+curl -X POST "https://hermes-cloudflare.<your>.workers.dev/api/kill?token=$HERMES_GATEWAY_TOKEN"
+```
+
+The cron trigger (every 5 min) or the next `/api/status` will respawn the gateway.
+
+**To force a brand-new container instance with the new image** (the nuclear option, when wrangler's image rebinding gets stuck):
+
+```sh
+npx wrangler containers delete <hermes-app-id>   # find via `wrangler containers list`
+npm run deploy                                    # recreates from scratch
+```
+
+This destroys the Durable Object's container instance but leaves R2 data intact. Hermes' state survives via snapshot/restore (if snapshots are enabled).
+
+### Troubleshooting
+
+- **Deploy hangs at `<layer-id>: Retrying ... unauthorized`** — wrangler's docker-push step is retrying a layer that's actually already in the registry. Workaround: in a separate terminal, manually `docker push registry.cloudflare.com/<account>/<image>:<tag>` (tag visible in `~/Library/Preferences/.wrangler/logs/*.log`), then re-run `npm run deploy`. Wrangler's "exists?" check passes the second time and it skips the push.
+- **`Modified application` but the live container still runs old code/env** — the existing container instance kept its original image. Either bounce via `/api/kill` (for env changes that flow through `start-hermes.sh`) or delete the container app + redeploy (for Dockerfile changes).
+- **`InvalidBackupConfigError: Backup requires R2 presigned URL credentials`** — you skipped the optional snapshot setup. See "Enable snapshots" above.
+
 ## Slack setup
 
 Hermes' Slack adapter uses **Socket Mode**, not webhooks — Hermes opens a WebSocket out to Slack. No public URL is registered with Slack.
@@ -99,6 +156,10 @@ DM the bot in Slack — first message wakes the container (1-2 min), subsequent 
 | `HERMES_GATEWAY_TOKEN` | yes | Gates all `/api/*` routes. Pick any random value. |
 | `SLACK_BOT_TOKEN` | yes (Slack) | `xoxb-...` |
 | `SLACK_APP_TOKEN` | yes (Slack) | `xapp-...` with `connections:write` scope |
+| `CLOUDFLARE_ACCOUNT_ID` | snapshots only | Your CF account ID; required by the SDK for `createBackup` |
+| `BACKUP_BUCKET_NAME` | snapshots only | R2 bucket name (`hermes-cloudflare-data`) |
+| `R2_ACCESS_KEY_ID` | snapshots only | From an R2 API token with Object Read/Write |
+| `R2_SECRET_ACCESS_KEY` | snapshots only | From the same R2 API token |
 | `TELEGRAM_BOT_TOKEN` | optional | Reserved for future Telegram support |
 | `DISCORD_BOT_TOKEN` | optional | Reserved for future Discord support |
 

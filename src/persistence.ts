@@ -107,7 +107,12 @@ export async function createSnapshot(
 
   console.log("[persistence] creating snapshot");
   const t0 = Date.now();
-  const handle = await sandbox.createBackup({ dir: BACKUP_DIR });
+  // lz4 is far faster than the default gzip — matters when /home/hermes is
+  // ~1.5 GB (the Hermes install + venv) and we have a tight Worker time budget.
+  const handle = await sandbox.createBackup({
+    dir: BACKUP_DIR,
+    compression: { format: "lz4" },
+  });
   await storeHandle(bucket, handle);
   console.log(`[persistence] snapshot ${handle.id} created in ${Date.now() - t0}ms`);
   return handle;

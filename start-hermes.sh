@@ -61,6 +61,24 @@ echo "[start-hermes] wrote $ENV_FILE"
     echo "    extra:"
     echo "      reply_in_thread: ${SLACK_REPLY_IN_THREAD:-true}"
   fi
+  # ---- Terminal backend: route shell commands to ExecSandbox ----
+  # The cloudflare_sandbox backend (tools/environments/cloudflare_sandbox.py)
+  # is injected into the Hermes install by the Dockerfile. It POSTs each
+  # command back to /api/sandbox/exec on the Worker, which forwards into
+  # the ExecSandbox container.
+  echo "terminal:"
+  echo "  backend: cloudflare_sandbox"
+  echo "  cwd: /workspace"
+  echo "  timeout: 180"
+  # ---- Platform toolsets: expose `terminal` (and friends) on Slack ----
+  # Without this, the Slack platform gets a stripped-down default toolset
+  # (no terminal/file/code_execution) — Hermes will say "terminal toolset
+  # isn't enabled in this session." Mirror what's available on `cli`.
+  echo "platform_toolsets:"
+  echo "  slack:"
+  for t in terminal code_execution file web browser memory skills todo messaging cronjob vision image_gen tts session_search clarify delegation kanban; do
+    echo "  - $t"
+  done
   echo "channels:"
   # Slack tokens live in .env (Socket Mode), not config.yaml.
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
