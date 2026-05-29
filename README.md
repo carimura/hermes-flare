@@ -1,5 +1,7 @@
 # hermes-flare
 
+Blog post: https://chad.cm/posts/2026-5-28-hermes-flare
+
 Run [Nous Research's Hermes Agent](https://hermes-agent.nousresearch.com/) inside a Cloudflare Sandbox container, with state persisted to R2 via the Sandbox SDK's snapshot API. Slack connects via Socket Mode (WebSocket out from the container) — no public webhook URL needs to be registered with Slack.
 
 Architectural patterns lifted from [`cloudflare/moltworker`](https://github.com/cloudflare/moltworker) (Apache 2.0); code written from scratch.
