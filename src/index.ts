@@ -6,6 +6,7 @@ import { createSnapshot, restoreIfNeeded, signalRestoreNeeded } from "./persiste
 export { Agent, Exec } from "./sandbox";
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
+const EXEC_SANDBOX_INSTANCE = "exec";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -26,6 +27,12 @@ function requireToken(c: { req: { query: (k: string) => string | undefined }; en
   return null;
 }
 
+app.use("/api/*", async (c, next) => {
+  const denied = requireToken(c);
+  if (denied) return denied;
+  await next();
+});
+
 // ----------------------------------------------------------------------------
 // Liveness — does NOT wake the container, no token required
 // ----------------------------------------------------------------------------
@@ -35,9 +42,7 @@ app.get("/health", (c) => c.text("ok"));
 // Status — wakes the container, ensures the gateway is running
 // ----------------------------------------------------------------------------
 app.get("/api/status", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
   const result = await ensureGateway(sandbox, c.env);
   return c.json(result);
@@ -47,9 +52,7 @@ app.get("/api/status", async (c) => {
 // Logs — dump the gateway startup script's recent output. Token-gated.
 // ----------------------------------------------------------------------------
 app.get("/api/logs", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   const procs = await sandbox.listProcesses();
   const lines: string[] = [`--- processes (${procs.length}) ---`];
   for (const p of procs) {
@@ -79,9 +82,7 @@ app.get("/api/logs", async (c) => {
 
 // Generate the Slack app manifest using Hermes' built-in command.
 app.get("/api/slack-manifest", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   const result = await sandbox.exec("hermes slack manifest 2>&1");
   return c.text(result.stdout, 200, { "content-type": "text/plain" });
 });
@@ -89,9 +90,7 @@ app.get("/api/slack-manifest", async (c) => {
 // Force-kill any running gateway process so the next /api/status (or the
 // next cron tick) restarts it fresh. Useful when iterating on config.
 app.post("/api/kill", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   await sandbox.exec(
     "pkill -9 -f 'hermes gateway' 2>/dev/null; pkill -9 -f start-hermes 2>/dev/null; true",
   );
@@ -103,9 +102,7 @@ app.post("/api/kill", async (c) => {
 // on mksquashfs. /home/hermes is small (~100MB) since the Hermes install
 // lives at /opt/hermes-install, so this typically finishes in a few seconds.
 app.post("/api/snapshot", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
     const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
@@ -120,14 +117,12 @@ app.post("/api/snapshot", async (c) => {
 // Mirrors `/api/sandbox/exec` for Exec; useful for diagnostics and for
 // testing snapshot/restore round-trips.
 app.post("/api/hermes/exec", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
   let body: { command?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (typeof body.command !== "string" || !body.command) {
     return c.json({ error: "missing or invalid 'command' (string)" }, 400);
   }
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   const result = await sandbox.exec(body.command);
   return c.json({
     success: result.success,
@@ -142,9 +137,7 @@ app.post("/api/hermes/exec", async (c) => {
 // marker and synchronously runs the restore. The gateway should be killed
 // first (POST /api/kill) so the squashfs overlay doesn't fight live writes.
 app.post("/api/restore", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-  const sandbox = getSandbox(c.env.Agent, SANDBOX_INSTANCE);
+  const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
     await signalRestoreNeeded(c.env.BACKUP_BUCKET);
@@ -164,12 +157,7 @@ app.post("/api/restore", async (c) => {
 // Stage 1: single shared Exec instance ("exec"), reused across commands.
 // Stage 2 (future): per-command unique-ID sandboxes for full isolation.
 // ----------------------------------------------------------------------------
-const EXEC_SANDBOX_INSTANCE = "exec";
-
 app.post("/api/sandbox/exec", async (c) => {
-  const denied = requireToken(c);
-  if (denied) return denied;
-
   let body: { command?: unknown; cwd?: unknown; timeout_ms?: unknown; env?: unknown };
   try {
     body = await c.req.json();
@@ -180,7 +168,7 @@ app.post("/api/sandbox/exec", async (c) => {
     return c.json({ error: "missing or invalid 'command' (string)" }, 400);
   }
 
-  const sandbox = getSandbox(c.env.Exec, EXEC_SANDBOX_INSTANCE);
+  const sandbox = getExecSandbox(c.env);
   try {
     const result = await sandbox.exec(body.command, {
       cwd: typeof body.cwd === "string" ? body.cwd : undefined,
@@ -215,7 +203,7 @@ export default {
     // cron-scheduled Hermes tasks have a chance to fire.
     ctx.waitUntil(
       (async () => {
-        const sandbox = getSandbox(env.Agent, SANDBOX_INSTANCE);
+        const sandbox = getAgentSandbox(env);
         await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
         await ensureGateway(sandbox, env);
       })(),
@@ -226,6 +214,61 @@ export default {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
+
+type SandboxHandleOptions = {
+  keepAlive?: boolean;
+  sleepAfter?: string;
+};
+
+const FORWARDED_OPTIONAL_ENV_KEYS = [
+  "SLACK_BOT_TOKEN",
+  "SLACK_APP_TOKEN",
+  "SLACK_ALLOWED_USERS",
+  "SLACK_REPLY_IN_THREAD",
+  "SLACK_HOME_CHANNEL",
+  "TELEGRAM_BOT_TOKEN",
+  "DISCORD_BOT_TOKEN",
+] as const;
+
+function getSandboxOptions(env: Env): SandboxHandleOptions {
+  return env.SANDBOX_SLEEP_AFTER && env.SANDBOX_SLEEP_AFTER !== "never"
+    ? { sleepAfter: env.SANDBOX_SLEEP_AFTER }
+    : { keepAlive: true };
+}
+
+function getAgentSandbox(env: Env): Sandbox {
+  return getSandbox(env.Agent, SANDBOX_INSTANCE, getSandboxOptions(env));
+}
+
+function getExecSandbox(env: Env): Sandbox {
+  return getSandbox(env.Exec, EXEC_SANDBOX_INSTANCE, getSandboxOptions(env));
+}
+
+function buildGatewayEnv(env: Env): Record<string, string> {
+  const envVars: Record<string, string> = {
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
+    HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
+    // Container runs as root (so mksquashfs can run for snapshots);
+    // Hermes refuses to start its gateway as root without this opt-in.
+    HERMES_ALLOW_ROOT_GATEWAY: "1",
+    PYTHONUNBUFFERED: "1",
+  };
+
+  for (const key of FORWARDED_OPTIONAL_ENV_KEYS) {
+    const value = env[key];
+    if (value) envVars[key] = value;
+  }
+
+  // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
+  // The cloudflare_sandbox plugin POSTs back to /api/sandbox/exec.
+  if (env.WORKER_PUBLIC_URL) {
+    envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
+    envVars.TERMINAL_ENV = "cloudflare_sandbox";
+    envVars.TERMINAL_CWD = "/workspace";
+  }
+
+  return envVars;
+}
 
 /**
  * Ensure the Hermes gateway process is running.
@@ -274,29 +317,7 @@ async function ensureGateway(
       // Start the gateway via our script, capturing output to a known
       // file so /api/logs can surface it. PYTHONUNBUFFERED=1 prevents
       // Hermes (Python) from buffering its stdout when redirected.
-      const envVars: Record<string, string> = {
-        ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
-        HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
-        // Container runs as root (so mksquashfs can run for snapshots);
-        // Hermes refuses to start its gateway as root without this opt-in.
-        HERMES_ALLOW_ROOT_GATEWAY: "1",
-        PYTHONUNBUFFERED: "1",
-      };
-      if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
-      if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
-      if (env.SLACK_ALLOWED_USERS) envVars.SLACK_ALLOWED_USERS = env.SLACK_ALLOWED_USERS;
-      if (env.SLACK_REPLY_IN_THREAD) envVars.SLACK_REPLY_IN_THREAD = env.SLACK_REPLY_IN_THREAD;
-      if (env.SLACK_HOME_CHANNEL) envVars.SLACK_HOME_CHANNEL = env.SLACK_HOME_CHANNEL;
-      if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
-      if (env.DISCORD_BOT_TOKEN) envVars.DISCORD_BOT_TOKEN = env.DISCORD_BOT_TOKEN;
-
-      // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
-      // The cloudflare_sandbox plugin POSTs back to /api/sandbox/exec.
-      if (env.WORKER_PUBLIC_URL) {
-        envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
-        envVars.TERMINAL_ENV = "cloudflare_sandbox";
-        envVars.TERMINAL_CWD = "/workspace";
-      }
+      const envVars = buildGatewayEnv(env);
 
       // Truncate the log between runs so stale output doesn't confuse debugging.
       await sandbox.exec("rm -f /tmp/start-hermes.log; true");
@@ -335,4 +356,3 @@ async function findGatewayProcess(
   }
   return null;
 }
-
