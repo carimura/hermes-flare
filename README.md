@@ -172,7 +172,6 @@ Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in
 | `SLACK_ALLOWED_USERS` | — | `.env` | Comma-separated Slack member IDs allowed to talk to the bot |
 | `SLACK_HOME_CHANNEL` | — | `.env` | Slack channel ID for scheduled/cron output |
 | `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
-| `SANDBOX_SLEEP_AFTER` | `never` | wrangler.jsonc | `"10m"`/`"1h"` etc. to hibernate when idle |
 
 ## Endpoints
 

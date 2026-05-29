@@ -215,11 +215,6 @@ export default {
 // Helpers
 // ----------------------------------------------------------------------------
 
-type SandboxHandleOptions = {
-  keepAlive?: boolean;
-  sleepAfter?: string;
-};
-
 const FORWARDED_OPTIONAL_ENV_KEYS = [
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
@@ -230,18 +225,12 @@ const FORWARDED_OPTIONAL_ENV_KEYS = [
   "DISCORD_BOT_TOKEN",
 ] as const;
 
-function getSandboxOptions(env: Env): SandboxHandleOptions {
-  return env.SANDBOX_SLEEP_AFTER && env.SANDBOX_SLEEP_AFTER !== "never"
-    ? { sleepAfter: env.SANDBOX_SLEEP_AFTER }
-    : { keepAlive: true };
-}
-
 function getAgentSandbox(env: Env): Sandbox {
-  return getSandbox(env.Agent, SANDBOX_INSTANCE, getSandboxOptions(env));
+  return getSandbox(env.Agent, SANDBOX_INSTANCE);
 }
 
 function getExecSandbox(env: Env): Sandbox {
-  return getSandbox(env.Exec, EXEC_SANDBOX_INSTANCE, getSandboxOptions(env));
+  return getSandbox(env.Exec, EXEC_SANDBOX_INSTANCE);
 }
 
 function buildGatewayEnv(env: Env): Record<string, string> {
