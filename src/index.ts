@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
-import type { Env } from "./env";
+import {
+  OPTIONAL_GATEWAY_ENV_KEYS,
+  REQUIRED_GATEWAY_ENV_KEYS,
+  type Env,
+} from "./env";
 import { createSnapshot, restoreIfNeeded, signalRestoreNeeded } from "./persistence";
 
 export { Agent, Exec } from "./sandbox";
@@ -275,20 +279,20 @@ async function ensureGateway(
       // file so /api/logs can surface it. PYTHONUNBUFFERED=1 prevents
       // Hermes (Python) from buffering its stdout when redirected.
       const envVars: Record<string, string> = {
-        ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
-        HERMES_GATEWAY_TOKEN: env.HERMES_GATEWAY_TOKEN ?? "",
         // Container runs as root (so mksquashfs can run for snapshots);
         // Hermes refuses to start its gateway as root without this opt-in.
         HERMES_ALLOW_ROOT_GATEWAY: "1",
         PYTHONUNBUFFERED: "1",
       };
-      if (env.SLACK_BOT_TOKEN) envVars.SLACK_BOT_TOKEN = env.SLACK_BOT_TOKEN;
-      if (env.SLACK_APP_TOKEN) envVars.SLACK_APP_TOKEN = env.SLACK_APP_TOKEN;
-      if (env.SLACK_ALLOWED_USERS) envVars.SLACK_ALLOWED_USERS = env.SLACK_ALLOWED_USERS;
-      if (env.SLACK_REPLY_IN_THREAD) envVars.SLACK_REPLY_IN_THREAD = env.SLACK_REPLY_IN_THREAD;
-      if (env.SLACK_HOME_CHANNEL) envVars.SLACK_HOME_CHANNEL = env.SLACK_HOME_CHANNEL;
-      if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
-      if (env.DISCORD_BOT_TOKEN) envVars.DISCORD_BOT_TOKEN = env.DISCORD_BOT_TOKEN;
+
+      for (const key of REQUIRED_GATEWAY_ENV_KEYS) {
+        envVars[key] = env[key] ?? "";
+      }
+
+      for (const key of OPTIONAL_GATEWAY_ENV_KEYS) {
+        const value = env[key];
+        if (value) envVars[key] = value;
+      }
 
       // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
       // The cloudflare_sandbox plugin POSTs back to /api/sandbox/exec.
@@ -335,4 +339,3 @@ async function findGatewayProcess(
   }
   return null;
 }
-
