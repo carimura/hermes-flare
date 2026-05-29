@@ -17,6 +17,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Hermes requires Node 22; the base ships Node 20. Replace it.
+# We fetch SHASUMS256.txt alongside the tarball and verify before extracting
+# (mirrors the official node:22 Dockerfile). The previous version used
+# `curl -fsSLk` which silently disabled TLS verification — gone now.
 ENV NODE_VERSION=22.22.1
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "${ARCH}" in \
@@ -24,11 +27,15 @@ RUN ARCH="$(dpkg --print-architecture)" \
          arm64) NODE_ARCH="arm64" ;; \
          *) echo "Unsupported arch: ${ARCH}" >&2; exit 1 ;; \
        esac \
+    && NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
     && apt-get update && apt-get install -y --no-install-recommends xz-utils ca-certificates \
     && rm -rf /usr/local/lib/node_modules /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
-    && curl -fsSLk "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
-    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node.tar.xz \
+    && cd /tmp \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o SHASUMS256.txt \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" -o "${NODE_TARBALL}" \
+    && grep " ${NODE_TARBALL}\$" SHASUMS256.txt | sha256sum -c - \
+    && tar -xJf "${NODE_TARBALL}" -C /usr/local --strip-components=1 \
+    && rm "${NODE_TARBALL}" SHASUMS256.txt \
     && node --version && npm --version
 
 # `uv` — Astral's Python package manager that Hermes' install.sh uses.
