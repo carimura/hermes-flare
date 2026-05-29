@@ -61,10 +61,6 @@
   "vars": {
     // "true" → Hermes replies in a thread (Slack default).
     // "false" → Hermes posts at the channel top level.
-    "SLACK_REPLY_IN_THREAD": "true",
-
-    // Container hibernation. "never" keeps it warm (faster, more expensive).
-    // Set "10m" / "1h" / "30s" to scale to zero when idle.
-    "SANDBOX_SLEEP_AFTER": "never"
+    "SLACK_REPLY_IN_THREAD": "true"
   }
 }
