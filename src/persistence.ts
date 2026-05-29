@@ -107,12 +107,12 @@ export async function createSnapshot(
 
   console.log("[persistence] creating snapshot");
   const t0 = Date.now();
-  // lz4 is far faster than the default gzip — matters when /home/hermes is
-  // ~1.5 GB (the Hermes install + venv) and we have a tight Worker time budget.
-  const handle = await sandbox.createBackup({
-    dir: BACKUP_DIR,
-    compression: { format: "lz4" },
-  });
+  // /home/hermes is ~100 MB now (Hermes install moved to /opt/hermes-install,
+  // see Dockerfile), so default mksquashfs gzip finishes within the Worker
+  // budget. An earlier version forced lz4 via `compression: { format: "lz4" }`
+  // for speed when the tree was 1.5 GB — that option isn't in the SDK's
+  // BackupOptions type and broke `npm run typecheck` (#10).
+  const handle = await sandbox.createBackup({ dir: BACKUP_DIR });
   await storeHandle(bucket, handle);
   console.log(`[persistence] snapshot ${handle.id} created in ${Date.now() - t0}ms`);
   return handle;

@@ -2,12 +2,14 @@
 # Hermes Agent on Cloudflare Sandbox
 # =============================================================================
 # Base: cloudflare/sandbox lean variant (Ubuntu 22.04 + Node 20, no Python).
-# We add Python 3 ourselves below. The image tag MUST match the npm package
-# version of @cloudflare/sandbox in package.json — the SDK and base image
-# are versioned together.
+# We add Python 3 ourselves below.
+#
+# IMPORTANT: the image tag MUST match `@cloudflare/sandbox` in package.json
+# (and in Dockerfile.exec). The SDK and base image are released together;
+# version drift across them causes runtime API mismatches.
 # See: https://developers.cloudflare.com/sandbox/configuration/dockerfile/
 # =============================================================================
-FROM docker.io/cloudflare/sandbox:0.7.20
+FROM docker.io/cloudflare/sandbox:0.7.21
 
 # The 0.7.20 base is the lean variant (Node 20, no Python). Install Python
 # 3 so Hermes' install.sh (which uses uv + pip) works. start-hermes.sh
