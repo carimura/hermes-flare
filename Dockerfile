@@ -9,7 +9,7 @@
 # version drift across them causes runtime API mismatches.
 # See: https://developers.cloudflare.com/sandbox/configuration/dockerfile/
 # =============================================================================
-FROM docker.io/cloudflare/sandbox:0.7.21
+FROM docker.io/cloudflare/sandbox:0.10.3
 
 # The 0.7.20 base is the lean variant (Node 20, no Python). Install Python
 # 3 so Hermes' install.sh (which uses uv + pip) works. start-hermes.sh

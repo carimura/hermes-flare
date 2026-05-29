@@ -7,7 +7,7 @@
 # =============================================================================
 # Keep this tag in lock-step with @cloudflare/sandbox in package.json (and
 # with the agent's Dockerfile). The SDK and base image are released together.
-FROM docker.io/cloudflare/sandbox:0.7.21
+FROM docker.io/cloudflare/sandbox:0.10.3
 
 # Python 3 (cloudflare/sandbox base is lean — Node 20 + bash + curl + git only).
 # pip + venv so the agent can install packages within a sandboxed exec.
