@@ -31,10 +31,6 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   DISCORD_BOT_TOKEN?: string;
 
-  // --- Container behavior ---
-  /** "never" (default) keeps the container warm. Set "10m", "1h", etc. to hibernate. */
-  SANDBOX_SLEEP_AFTER?: string;
-
   /**
    * Public URL of THIS Worker, used by the Hermes container's
    * cloudflare_sandbox backend to POST commands back to /api/sandbox/exec.
