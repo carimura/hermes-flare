@@ -7,6 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=runtime-env.sh
+source "$ROOT/scripts/runtime-env.sh"
+
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -14,18 +17,8 @@ if [ -f .env ]; then
   set +a
 fi
 
-# Vars we forward from .env. Each unset/empty var is silently skipped — the
-# wrangler.jsonc default (if any) wins.
-VARS=(
-  SLACK_ALLOWED_USERS
-  SLACK_HOME_CHANNEL
-  SLACK_REPLY_IN_THREAD
-  SANDBOX_SLEEP_AFTER
-  WORKER_PUBLIC_URL
-)
-
 ARGS=()
-for VAR in "${VARS[@]}"; do
+for VAR in "${DEPLOY_VARS[@]}"; do
   VAL="${!VAR-}"
   if [ -n "${VAL}" ]; then
     ARGS+=(--var "${VAR}:${VAL}")

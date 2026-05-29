@@ -16,10 +16,14 @@ HERMES_HOME="${HERMES_HOME:-/home/hermes/.hermes}"
 ENV_FILE="$HERMES_HOME/.env"
 CONFIG_FILE="$HERMES_HOME/config.yaml"
 GATEWAY_PORT="${HERMES_GATEWAY_PORT:-8642}"
+RUNTIME_ENV_FILE="${HERMES_RUNTIME_ENV_FILE:-/usr/local/lib/hermes-runtime-env.sh}"
 
 echo "[start-hermes] HERMES_HOME=$HERMES_HOME"
 echo "[start-hermes] gateway port=$GATEWAY_PORT"
 mkdir -p "$HERMES_HOME"
+
+# shellcheck source=scripts/runtime-env.sh
+source "$RUNTIME_ENV_FILE"
 
 # ---------------------------------------------------------------------------
 # 1. Always re-seed .env from runtime env vars. Worker secrets are the
@@ -27,14 +31,10 @@ mkdir -p "$HERMES_HOME"
 #    Hermes' Slack adapter reads its config from .env (Socket Mode).
 # ---------------------------------------------------------------------------
 : > "$ENV_FILE"
-[ -n "${ANTHROPIC_API_KEY:-}" ]   && echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"     >> "$ENV_FILE"
-[ -n "${OPENAI_API_KEY:-}" ]      && echo "OPENAI_API_KEY=$OPENAI_API_KEY"           >> "$ENV_FILE"
-[ -n "${SLACK_BOT_TOKEN:-}" ]     && echo "SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN"         >> "$ENV_FILE"
-[ -n "${SLACK_APP_TOKEN:-}" ]     && echo "SLACK_APP_TOKEN=$SLACK_APP_TOKEN"         >> "$ENV_FILE"
-[ -n "${SLACK_ALLOWED_USERS:-}" ] && echo "SLACK_ALLOWED_USERS=$SLACK_ALLOWED_USERS" >> "$ENV_FILE"
-[ -n "${SLACK_HOME_CHANNEL:-}" ]  && echo "SLACK_HOME_CHANNEL=$SLACK_HOME_CHANNEL"   >> "$ENV_FILE"
-[ -n "${TELEGRAM_BOT_TOKEN:-}" ]  && echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"   >> "$ENV_FILE"
-[ -n "${DISCORD_BOT_TOKEN:-}" ]   && echo "DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"     >> "$ENV_FILE"
+for VAR in "${HERMES_ENV_FILE_VARS[@]}"; do
+  VAL="${!VAR-}"
+  [ -n "$VAL" ] && printf "%s=%s\n" "$VAR" "$VAL" >> "$ENV_FILE"
+done
 chmod 600 "$ENV_FILE"
 echo "[start-hermes] wrote $ENV_FILE"
 

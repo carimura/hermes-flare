@@ -94,7 +94,7 @@ If you want `POST /api/snapshot` to work, you also need R2 API credentials (the 
 
 `npm run deploy` is the one command. Under the hood it's `bash scripts/deploy.sh`:
 
-1. Reads `.env` (gitignored, see `.env.example`) — your personal IDs like `SLACK_ALLOWED_USERS`.
+1. Reads `.env` (gitignored, see `.env.example`) — deployable vars are listed in `scripts/runtime-env.sh`.
 2. Builds `--var KEY:VAL` args from those values.
 3. Runs `npx wrangler deploy ...`.
 
@@ -153,6 +153,7 @@ DM the bot in Slack — first message wakes the container (1-2 min), subsequent 
 | Secret | Required | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | Forwarded into the container; Hermes uses for inference |
+| `OPENAI_API_KEY` | optional | Forwarded into the container for OpenAI-compatible models |
 | `HERMES_GATEWAY_TOKEN` | yes | Gates all `/api/*` routes. Pick any random value. |
 | `SLACK_BOT_TOKEN` | yes (Slack) | `xoxb-...` |
 | `SLACK_APP_TOKEN` | yes (Slack) | `xapp-...` with `connections:write` scope |
@@ -173,6 +174,9 @@ Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in
 | `SLACK_HOME_CHANNEL` | — | `.env` | Slack channel ID for scheduled/cron output |
 | `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
 | `SANDBOX_SLEEP_AFTER` | `never` | wrangler.jsonc | `"10m"`/`"1h"` etc. to hibernate when idle |
+| `WORKER_PUBLIC_URL` | — | `.env` | Public Worker URL used by the container terminal backend |
+
+Runtime env key lists live in `src/env.ts` for Worker typing/forwarding and in `scripts/runtime-env.sh` for deploy/startup shell scripts.
 
 ## Endpoints
 

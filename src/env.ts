@@ -1,6 +1,28 @@
 import type { Sandbox } from "@cloudflare/sandbox";
 
-export interface Env {
+export const REQUIRED_GATEWAY_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "HERMES_GATEWAY_TOKEN",
+] as const;
+
+export const OPTIONAL_GATEWAY_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "SLACK_BOT_TOKEN",
+  "SLACK_APP_TOKEN",
+  "SLACK_ALLOWED_USERS",
+  "SLACK_REPLY_IN_THREAD",
+  "SLACK_HOME_CHANNEL",
+  "TELEGRAM_BOT_TOKEN",
+  "DISCORD_BOT_TOKEN",
+] as const;
+
+export type RequiredGatewayEnvKey = typeof REQUIRED_GATEWAY_ENV_KEYS[number];
+export type OptionalGatewayEnvKey = typeof OPTIONAL_GATEWAY_ENV_KEYS[number];
+
+type RequiredGatewayEnv = Record<RequiredGatewayEnvKey, string>;
+type OptionalGatewayEnv = Partial<Record<OptionalGatewayEnvKey, string>>;
+
+export interface Env extends RequiredGatewayEnv, OptionalGatewayEnv {
   // The Sandbox Durable Object namespace, bound in wrangler.jsonc.
   Agent: DurableObjectNamespace<Sandbox>;
 
@@ -11,25 +33,6 @@ export interface Env {
   // R2 bucket where snapshots are stored. @cloudflare/sandbox expects
   // this binding name.
   BACKUP_BUCKET: R2Bucket;
-
-  // --- Secrets forwarded into the container at startup ---
-  ANTHROPIC_API_KEY: string;
-  HERMES_GATEWAY_TOKEN: string;
-
-  // Slack uses Socket Mode (WebSocket from container to Slack). We need
-  // BOTH a bot token (xoxb-) and an app-level token (xapp-) with the
-  // connections:write scope.
-  SLACK_BOT_TOKEN?: string;
-  SLACK_APP_TOKEN?: string;
-  /** Comma-separated Slack member IDs (U01ABC2DEF3) allowed to talk to the bot. From vars. */
-  SLACK_ALLOWED_USERS?: string;
-  /** "false" → Hermes replies in the channel; "true" → in a thread. From vars. */
-  SLACK_REPLY_IN_THREAD?: string;
-  /** Slack channel ID for scheduled/cron messages. Optional. From vars. */
-  SLACK_HOME_CHANNEL?: string;
-
-  TELEGRAM_BOT_TOKEN?: string;
-  DISCORD_BOT_TOKEN?: string;
 
   // --- Container behavior ---
   /** "never" (default) keeps the container warm. Set "10m", "1h", etc. to hibernate. */

@@ -96,8 +96,10 @@ RUN chmod -R a+rX /home/hermes
 # run mksquashfs for snapshot/backup. Hermes accepts running as root when
 # HERMES_ALLOW_ROOT_GATEWAY=1 is set (see Worker envVars).
 USER root
+COPY scripts/runtime-env.sh /usr/local/lib/hermes-runtime-env.sh
 COPY start-hermes.sh /usr/local/bin/start-hermes.sh
-RUN chmod +x /usr/local/bin/start-hermes.sh
+RUN chmod 644 /usr/local/lib/hermes-runtime-env.sh \
+    && chmod +x /usr/local/bin/start-hermes.sh
 
 # Hermes gateway listens here. Started by the Worker via startProcess(),
 # not by a Dockerfile CMD — that way we get stdout/stderr capture.
