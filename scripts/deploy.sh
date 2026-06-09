@@ -42,10 +42,19 @@ done
 # AGENT_NAME is the single per-agent knob: it names the Worker (so cloning =
 # set AGENT_NAME, deploy) and namespaces this agent's R2 keys (so all agents
 # share one bucket). Unset → wrangler.jsonc's default name/AGENT_NAME apply.
+#
+# `--name` alone is NOT enough: wrangler derives container application names
+# (`<name>-agent`, `<name>-exec`) from the CONFIG FILE's `name` at parse time,
+# before `--name` applies — so two agents would collide on the same container
+# app names. Instead we deploy a temp copy of wrangler.jsonc with `name`
+# swapped to AGENT_NAME (same directory, so relative paths still resolve).
 if [ -n "${AGENT_NAME:-}" ]; then
-  ARGS+=(--name "${AGENT_NAME}")
+  TMP_CONFIG="$ROOT/.wrangler.deploy.jsonc"
+  sed 's/"name": "hermes-flare"/"name": "'"${AGENT_NAME}"'"/' wrangler.jsonc > "$TMP_CONFIG"
+  trap 'rm -f "$TMP_CONFIG"' EXIT
+  ARGS+=(--config "$TMP_CONFIG")
 fi
 
 # `${ARGS[@]+"${ARGS[@]}"}` survives an empty array under `set -u` (macOS
 # default bash 3.2 treats `${ARGS[@]}` on an empty array as unbound).
-exec npx wrangler deploy ${ARGS[@]+"${ARGS[@]}"} "$@"
+npx wrangler deploy ${ARGS[@]+"${ARGS[@]}"} "$@"
