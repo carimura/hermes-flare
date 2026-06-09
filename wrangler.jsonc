@@ -75,6 +75,12 @@
     // canonical agent and what `npm run dev` / `deploy:bare` use.
     "AGENT_NAME": "hermes-flare",
 
+    // Your account's workers.dev subdomain. The Worker composes its public URL
+    // as https://<AGENT_NAME>.<WORKERS_SUBDOMAIN>.workers.dev for the
+    // container's terminal backend — so cloning needs no per-agent URL. An
+    // account constant; override per-agent via .env only if it differs.
+    "WORKERS_SUBDOMAIN": "carimura",
+
     // "true" → Hermes replies in a thread (Slack default).
     // "false" → Hermes posts at the channel top level.
     "SLACK_REPLY_IN_THREAD": "true",

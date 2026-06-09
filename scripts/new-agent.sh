@@ -104,9 +104,9 @@ ask_secret SLACK_BOT_TOKEN "Slack BOT token (xoxb-...)"
 say "7) Writing .env"
 {
   echo "AGENT_NAME=${AGENT_NAME}"
+  echo "WORKERS_SUBDOMAIN=${WORKERS_SUBDOMAIN}"
   echo "SLACK_ALLOWED_USERS=${SLACK_ALLOWED_USERS}"
   [ -n "$SLACK_HOME_CHANNEL" ] && echo "SLACK_HOME_CHANNEL=${SLACK_HOME_CHANNEL}"
-  echo "WORKER_PUBLIC_URL=${WORKER_PUBLIC_URL}"
 } > .env
 note "  wrote .env (secrets are pushed separately, never stored here)"
 

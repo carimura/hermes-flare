@@ -232,6 +232,15 @@ function agentName(env: Env): string {
   return env.AGENT_NAME && env.AGENT_NAME.length > 0 ? env.AGENT_NAME : DEFAULT_AGENT_NAME;
 }
 
+/** This Worker's public URL for the container's terminal backend to call back
+ *  to /api/sandbox/exec. Composed from AGENT_NAME + WORKERS_SUBDOMAIN so a clone
+ *  needs no per-agent URL; WORKER_PUBLIC_URL overrides (e.g. a custom domain). */
+function workerPublicUrl(env: Env): string {
+  if (env.WORKER_PUBLIC_URL) return env.WORKER_PUBLIC_URL;
+  if (env.WORKERS_SUBDOMAIN) return `https://${agentName(env)}.${env.WORKERS_SUBDOMAIN}.workers.dev`;
+  return "";
+}
+
 type SandboxHandleOptions = {
   keepAlive?: boolean;
   sleepAfter?: string;
@@ -294,8 +303,9 @@ function buildGatewayEnv(env: Env): Record<string, string> {
 
   // ---- Terminal backend: route Hermes-issued shell commands to Exec ----
   // The cloudflare_sandbox plugin POSTs back to /api/sandbox/exec.
-  if (env.WORKER_PUBLIC_URL) {
-    envVars.CLOUDFLARE_WORKER_URL = env.WORKER_PUBLIC_URL;
+  const workerUrl = workerPublicUrl(env);
+  if (workerUrl) {
+    envVars.CLOUDFLARE_WORKER_URL = workerUrl;
     envVars.TERMINAL_ENV = "cloudflare_sandbox";
     envVars.TERMINAL_CWD = "/workspace";
   }

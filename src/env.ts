@@ -50,10 +50,19 @@ export interface Env {
   BACKUP_RETENTION_DAYS?: string;
 
   /**
-   * Public URL of THIS Worker, used by the Hermes container's
-   * cloudflare_sandbox backend to POST commands back to /api/sandbox/exec.
-   * Worker has no built-in self-URL API, so we plumb it through as a var
-   * from .env (scripts/deploy.sh).
+   * Your account's workers.dev subdomain (the `<sub>` in
+   * `https://<worker>.<sub>.workers.dev`). The Worker composes its own public
+   * URL as `https://${AGENT_NAME}.${WORKERS_SUBDOMAIN}.workers.dev` to hand to
+   * the container's cloudflare_sandbox backend — so a clone needs no per-agent
+   * URL. Default lives in wrangler.jsonc; an account constant, not per-agent.
+   */
+  WORKERS_SUBDOMAIN?: string;
+
+  /**
+   * Optional override for the Worker's public URL (e.g. a custom domain). When
+   * set, used verbatim instead of the AGENT_NAME + WORKERS_SUBDOMAIN
+   * composition. The container's cloudflare_sandbox backend POSTs commands
+   * back to /api/sandbox/exec at this URL.
    */
   WORKER_PUBLIC_URL?: string;
 }
