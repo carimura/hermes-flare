@@ -15,15 +15,20 @@
       "image": "./Dockerfile",
       "instance_type": "standard-1",
       "max_instances": 1,
-      // `wrangler containers ssh <container-id>` for direct shell access.
-      "ssh": { "enabled": true }
+      "ssh": { "enabled": true },
+      "authorized_keys": [
+      { "name": "chad", "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUclJrxuOG4koiq8iow7ByY/5TO6MgVrDEWEX+vOJcY hermes-cf" }
+      ]
     },
     {
       "class_name": "Exec",
       "image": "./Dockerfile.exec",
       "instance_type": "lite",
       "max_instances": 1,
-      "ssh": { "enabled": true }
+      "ssh": { "enabled": true },
+      "authorized_keys": [
+      { "name": "chad", "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUclJrxuOG4koiq8iow7ByY/5TO6MgVrDEWEX+vOJcY hermes-cf" }
+      ]
     }
   ],
 
