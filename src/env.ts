@@ -38,6 +38,9 @@ export interface Env {
   /** Minutes the latest R2 backup may age before the cron re-snapshots. Default 60. From vars. */
   SNAPSHOT_INTERVAL_MINUTES?: string;
 
+  /** Days of backups to retain before pruning older ones from R2. Default 3. From vars. */
+  BACKUP_RETENTION_DAYS?: string;
+
   /**
    * Public URL of THIS Worker, used by the Hermes container's
    * cloudflare_sandbox backend to POST commands back to /api/sandbox/exec.

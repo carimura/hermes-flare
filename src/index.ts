@@ -105,7 +105,7 @@ app.post("/api/snapshot", async (c) => {
   const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
-    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET);
+    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET, backupRetentionDays(c.env));
     return c.json({ ok: true, handle, duration_ms: Date.now() - t0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -211,7 +211,7 @@ export default {
         // the next one. Cadence set by SNAPSHOT_INTERVAL_MINUTES. Wrapped so a
         // snapshot hiccup can't fail the keepalive path.
         try {
-          await snapshotIfDue(sandbox, env.BACKUP_BUCKET, snapshotIntervalMs(env));
+          await snapshotIfDue(sandbox, env.BACKUP_BUCKET, snapshotIntervalMs(env), backupRetentionDays(env));
         } catch (err) {
           console.error("[scheduled] snapshot failed:", err);
         }
@@ -259,6 +259,14 @@ const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 60;
 function snapshotIntervalMs(env: Env): number {
   const minutes = Number(env.SNAPSHOT_INTERVAL_MINUTES);
   return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_SNAPSHOT_INTERVAL_MINUTES) * 60_000;
+}
+
+const DEFAULT_BACKUP_RETENTION_DAYS = 3;
+
+/** How many days of backups to keep before pruning older ones. */
+function backupRetentionDays(env: Env): number {
+  const days = Number(env.BACKUP_RETENTION_DAYS);
+  return Number.isFinite(days) && days > 0 ? days : DEFAULT_BACKUP_RETENTION_DAYS;
 }
 
 function buildGatewayEnv(env: Env): Record<string, string> {

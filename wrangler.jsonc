@@ -76,6 +76,11 @@
 
     // How stale the latest R2 backup may get (minutes) before the 5-min cron
     // takes a fresh snapshot. Values below 5 effectively mean "every tick".
-    "SNAPSHOT_INTERVAL_MINUTES": "60"
+    "SNAPSHOT_INTERVAL_MINUTES": "60",
+
+    // Days of backups to retain. Each snapshot prunes backups older than this
+    // from R2; each backup's ttl is set a day beyond it so retained backups
+    // stay restorable. Raise SNAPSHOT_INTERVAL_MINUTES to keep fewer.
+    "BACKUP_RETENTION_DAYS": "3"
   }
 }

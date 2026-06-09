@@ -176,6 +176,7 @@ Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in
 | `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
 | `SANDBOX_SLEEP_AFTER` | `never` | wrangler.jsonc | `"10m"`/`"1h"` etc. to hibernate when idle |
 | `SNAPSHOT_INTERVAL_MINUTES` | `60` | wrangler.jsonc | Max age of the latest R2 backup before the cron re-snapshots |
+| `BACKUP_RETENTION_DAYS` | `3` | wrangler.jsonc | Days of backups to retain; older ones are pruned from R2 |
 
 ## Endpoints
 
