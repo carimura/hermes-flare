@@ -14,9 +14,13 @@ if [ -f .env ]; then
   set +a
 fi
 
-# Vars we forward from .env. Each unset/empty var is silently skipped — the
-# wrangler.jsonc default (if any) wins.
+# Vars we forward from .env as PLAINTEXT Worker vars. Keep this an explicit
+# allowlist, NOT a blanket "forward everything in .env": .env may also hold
+# secrets (HERMES_GATEWAY_TOKEN, R2_ACCESS_KEY_ID, ...) that must stay as
+# `wrangler secret put` (encrypted) and never leak in as plaintext --var.
+# Each unset/empty var is silently skipped — the wrangler.jsonc default wins.
 VARS=(
+  AGENT_NAME
   SLACK_ALLOWED_USERS
   SLACK_HOME_CHANNEL
   SLACK_REPLY_IN_THREAD
@@ -33,6 +37,13 @@ for VAR in "${VARS[@]}"; do
     ARGS+=(--var "${VAR}:${VAL}")
   fi
 done
+
+# AGENT_NAME is the single per-agent knob: it names the Worker (so cloning =
+# set AGENT_NAME, deploy) and namespaces this agent's R2 keys (so all agents
+# share one bucket). Unset → wrangler.jsonc's default name/AGENT_NAME apply.
+if [ -n "${AGENT_NAME:-}" ]; then
+  ARGS+=(--name "${AGENT_NAME}")
+fi
 
 # `${ARGS[@]+"${ARGS[@]}"}` survives an empty array under `set -u` (macOS
 # default bash 3.2 treats `${ARGS[@]}` on an empty array as unbound).

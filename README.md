@@ -53,7 +53,8 @@ npm install
 
 # 1. Personal IDs go in .env (gitignored).
 cp .env.example .env
-# edit .env: add your SLACK_ALLOWED_USERS (Slack member ID, U01ABC2DEF3)
+# edit .env: set AGENT_NAME (the Worker name) and your SLACK_ALLOWED_USERS
+# (Slack member ID, U01ABC2DEF3)
 
 # 2. Push secrets.
 npx wrangler secret put ANTHROPIC_API_KEY     # sk-ant-...
@@ -61,7 +62,7 @@ npx wrangler secret put HERMES_GATEWAY_TOKEN  # `openssl rand -hex 32`
 npx wrangler secret put SLACK_BOT_TOKEN       # xoxb-... (see "Slack setup")
 npx wrangler secret put SLACK_APP_TOKEN       # xapp-... (see "Slack setup")
 
-# 3. Create the R2 bucket for snapshots.
+# 3. Create the R2 bucket for snapshots (shared by all agents — create once).
 npx wrangler r2 bucket create hermes-flare-data
 
 # 4. Deploy.
@@ -77,20 +78,29 @@ curl "https://hermes-flare.<your-subdomain>.workers.dev/api/status?token=$HERMES
 
 First hit takes 1-2 minutes (cold container + Hermes gateway boot). After that, the cron trigger (every 5 min) keeps the gateway alive.
 
-### Optional: enable snapshots
+### Running multiple agents
 
-If you want `POST /api/snapshot` to work, you also need R2 API credentials (the Sandbox SDK uses presigned URLs to write the squashfs blob):
+Each agent is one deployed Worker. To stand up another, clone the repo, set a
+distinct `AGENT_NAME` in `.env`, push that agent's own secrets, and deploy:
 
-1. Cloudflare dashboard → **R2** → **Manage R2 API Tokens** → **Create API Token** with **Object Read & Write** scoped to the `hermes-flare-data` bucket.
-2. Copy the **Access Key ID** + **Secret Access Key**.
-3. Push 4 secrets:
-   ```sh
-   echo "$CF_ACCOUNT_ID"          | npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
-   echo "hermes-flare-data"  | npx wrangler secret put BACKUP_BUCKET_NAME
-   npx wrangler secret put R2_ACCESS_KEY_ID       # paste Access Key ID
-   npx wrangler secret put R2_SECRET_ACCESS_KEY   # paste Secret Access Key
-   ```
-4. `npm run deploy` once more so the new secrets are bound.
+```sh
+git clone https://github.com/carimura/hermes-flare athena && cd athena
+npm install
+cp .env.example .env          # set AGENT_NAME=athena + this agent's Slack IDs
+npx wrangler secret put ANTHROPIC_API_KEY    # ...and the rest, per agent
+npm run deploy                # deploys a Worker named "athena"
+```
+
+No new R2 bucket is needed — all agents share `hermes-flare-data`, and each
+agent's snapshots are namespaced under `<AGENT_NAME>/`. `AGENT_NAME` is the
+only structural change between clones; everything else is per-agent secrets/IDs.
+
+### Snapshots
+
+Snapshots are automatic — no setup beyond the R2 bucket created above. The
+cron (every 5 min) backs up `/home/hermes` to R2 through the bound
+`BACKUP_BUCKET` binding (the SDK's `localBucket` mode), so there's no R2 API
+token, account ID, or extra secret to configure. See [Persistence](#persistence).
 
 ## Deploying
 
@@ -126,13 +136,12 @@ npx wrangler containers delete <hermes-app-id>   # find via `wrangler containers
 npm run deploy                                    # recreates from scratch
 ```
 
-This destroys the Durable Object's container instance but leaves R2 data intact. Hermes' state survives via snapshot/restore (if snapshots are enabled).
+This destroys the Durable Object's container instance but leaves R2 data intact. Hermes' state survives via snapshot/restore.
 
 ### Troubleshooting
 
 - **Deploy hangs at `<layer-id>: Retrying ... unauthorized`** — wrangler's docker-push step is retrying a layer that's actually already in the registry. Workaround: in a separate terminal, manually `docker push registry.cloudflare.com/<account>/<image>:<tag>` (tag visible in `~/Library/Preferences/.wrangler/logs/*.log`), then re-run `npm run deploy`. Wrangler's "exists?" check passes the second time and it skips the push.
 - **`Modified application` but the live container still runs old code/env** — the existing container instance kept its original image. Either bounce via `/api/kill` (for env changes that flow through `start-hermes.sh`) or delete the container app + redeploy (for Dockerfile changes).
-- **`InvalidBackupConfigError: Backup requires R2 presigned URL credentials`** — you skipped the optional snapshot setup. See "Enable snapshots" above.
 
 ## Slack setup
 
@@ -158,19 +167,16 @@ DM the bot in Slack — first message wakes the container (1-2 min), subsequent 
 | `HERMES_GATEWAY_TOKEN` | yes | Gates all `/api/*` routes. Pick any random value. |
 | `SLACK_BOT_TOKEN` | yes (Slack) | `xoxb-...` |
 | `SLACK_APP_TOKEN` | yes (Slack) | `xapp-...` with `connections:write` scope |
-| `CLOUDFLARE_ACCOUNT_ID` | snapshots only | Your CF account ID; required by the SDK for `createBackup` |
-| `BACKUP_BUCKET_NAME` | snapshots only | R2 bucket name (`hermes-flare-data`) |
-| `R2_ACCESS_KEY_ID` | snapshots only | From an R2 API token with Object Read/Write |
-| `R2_SECRET_ACCESS_KEY` | snapshots only | From the same R2 API token |
 | `TELEGRAM_BOT_TOKEN` | optional | Reserved for future Telegram support |
 | `DISCORD_BOT_TOKEN` | optional | Reserved for future Discord support |
 
 ### Non-secret vars
 
-Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in `.env` (gitignored). `npm run deploy` reads `.env` and applies values via `wrangler deploy --var`.
+Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in `.env` (gitignored). `npm run deploy` reads `.env` and applies values via `wrangler deploy --var`. `.env` holds **non-secret** values only — secrets always go through `wrangler secret put` (encrypted), never `.env`.
 
 | Var | Default | Where | Purpose |
 |---|---|---|---|
+| `AGENT_NAME` | `hermes-flare` | `.env` | This agent's identity — names the deployed Worker and namespaces its snapshots in the shared R2 bucket. The one knob to change when cloning. |
 | `SLACK_ALLOWED_USERS` | — | `.env` | Comma-separated Slack member IDs allowed to talk to the bot |
 | `SLACK_HOME_CHANNEL` | — | `.env` | Slack channel ID for scheduled/cron output |
 | `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
@@ -191,11 +197,13 @@ All `/api/*` routes require `?token=$HERMES_GATEWAY_TOKEN`.
 | POST | `/api/snapshot` | Snapshot `/home/hermes` to R2 |
 | POST | `/api/kill` | Kill the gateway process (cron will revive it within 5 min) |
 
-The cron trigger runs every 5 minutes, calling `restoreIfNeeded` + `ensureGateway` — so the gateway always comes back from a kill or container restart without manual intervention. It also snapshots `/home/hermes` to R2 whenever the latest backup is older than `SNAPSHOT_INTERVAL_MINUTES` (default 60), keeping a fresh backup ahead of the 72h snapshot TTL.
+The cron trigger runs every 5 minutes, calling `restoreIfNeeded` + `ensureGateway` — so the gateway always comes back from a kill or container restart without manual intervention. It also snapshots `/home/hermes` to R2 whenever the latest backup is older than `SNAPSHOT_INTERVAL_MINUTES` (default 240), keeping a fresh backup ahead of its TTL.
 
 ## Persistence
 
 The Sandbox SDK has a `createBackup` / `restoreBackup` API that exports a container directory as a squashfs image to R2. We snapshot `/home/hermes` — Hermes' data dir, containing sessions, memories, learned skills, and config. On every cold container start, the Worker restores from R2 before serving the request. Without this, every restart would wipe Hermes' growing memory.
+
+Backups go through the bound `BACKUP_BUCKET` R2 binding (the SDK's `localBucket` mode) rather than presigned URLs, so no R2 API token or account-ID secret is needed — snapshots work as soon as the bucket exists. All agents share one bucket; each agent's metadata keys are namespaced under `<AGENT_NAME>/`, and the SDK's squashfs blobs are globally unique by id.
 
 Snapshot paths must live under `/home`, `/workspace`, `/tmp`, or `/var/tmp`. Hermes hardcodes `/opt/data` — we symlink that to `/home/hermes/.hermes` in the Dockerfile so Hermes' assumptions hold while the real data sits in a snapshot-eligible path.
 
@@ -203,7 +211,7 @@ Snapshot paths must live under `/home`, `/workspace`, `/tmp`, or `/var/tmp`. Her
 
 ### Why `cloudflare/sandbox` base, not `nousresearch/hermes-agent`
 
-The Sandbox SDK's snapshot API requires the `cloudflare/sandbox` base image — it ships the FUSE machinery the snapshot system uses. We install Hermes on top of that base rather than starting from Nous's official image.
+The Sandbox SDK's snapshot API requires the `cloudflare/sandbox` base image — it ships the squashfs tooling (`mksquashfs`/`unsquashfs`) the snapshot system uses. We install Hermes on top of that base rather than starting from Nous's official image.
 
 ### Why the Worker starts Hermes, not a Dockerfile `CMD`
 
@@ -234,7 +242,7 @@ npm run dev
 hermes-flare/
 ├─ README.md
 ├─ LICENSE                  # Apache 2.0
-├─ Dockerfile               # cloudflare/sandbox:0.7.20 + Hermes install
+├─ Dockerfile               # cloudflare/sandbox:0.10.3 + Hermes install
 ├─ start-hermes.sh          # container entrypoint
 ├─ slack-manifest.json      # reference; generate fresh via /api/slack-manifest
 ├─ wrangler.jsonc

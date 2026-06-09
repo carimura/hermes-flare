@@ -25,16 +25,16 @@ mkdir -p "$HERMES_HOME"
 # 1. Always re-seed .env from runtime env vars. Worker secrets are the
 #    source of truth — if the user rotates a key, restart picks it up.
 #    Hermes' Slack adapter reads its config from .env (Socket Mode).
+#
+#    Seed from whatever channel/provider vars the Worker forwarded into our
+#    process env, matched by prefix. Allowlisting prefixes (not a blanket
+#    `env` dump) keeps gateway internals like HERMES_GATEWAY_TOKEN out of .env
+#    — that one goes in config.yaml below. A new channel var with a known
+#    prefix is seeded automatically, no edit here. (The Worker decides what
+#    reaches this env; see FORWARDED_OPTIONAL_ENV_KEYS in src/index.ts.)
 # ---------------------------------------------------------------------------
 : > "$ENV_FILE"
-[ -n "${ANTHROPIC_API_KEY:-}" ]   && echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"     >> "$ENV_FILE"
-[ -n "${OPENAI_API_KEY:-}" ]      && echo "OPENAI_API_KEY=$OPENAI_API_KEY"           >> "$ENV_FILE"
-[ -n "${SLACK_BOT_TOKEN:-}" ]     && echo "SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN"         >> "$ENV_FILE"
-[ -n "${SLACK_APP_TOKEN:-}" ]     && echo "SLACK_APP_TOKEN=$SLACK_APP_TOKEN"         >> "$ENV_FILE"
-[ -n "${SLACK_ALLOWED_USERS:-}" ] && echo "SLACK_ALLOWED_USERS=$SLACK_ALLOWED_USERS" >> "$ENV_FILE"
-[ -n "${SLACK_HOME_CHANNEL:-}" ]  && echo "SLACK_HOME_CHANNEL=$SLACK_HOME_CHANNEL"   >> "$ENV_FILE"
-[ -n "${TELEGRAM_BOT_TOKEN:-}" ]  && echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"   >> "$ENV_FILE"
-[ -n "${DISCORD_BOT_TOKEN:-}" ]   && echo "DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"     >> "$ENV_FILE"
+env | grep -E '^(ANTHROPIC_|OPENAI_|SLACK_|TELEGRAM_|DISCORD_)[A-Z0-9_]*=' >> "$ENV_FILE" || true
 chmod 600 "$ENV_FILE"
 echo "[start-hermes] wrote $ENV_FILE"
 

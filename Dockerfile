@@ -11,7 +11,7 @@
 # =============================================================================
 FROM docker.io/cloudflare/sandbox:0.10.3
 
-# The 0.7.20 base is the lean variant (Node 20, no Python). Install Python
+# The 0.10.3 base is the lean variant (Node 20, no Python). Install Python
 # 3 so Hermes' install.sh (which uses uv + pip) works. start-hermes.sh
 # itself uses plain bash + heredoc to write config — no Python lib deps.
 RUN apt-get update \

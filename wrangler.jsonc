@@ -46,8 +46,10 @@
     { "tag": "v1", "new_sqlite_classes": ["Agent", "Exec"] }
   ],
 
-  // R2 bucket for squashfs snapshots. The binding name BACKUP_BUCKET is the
-  // convention @cloudflare/sandbox expects.
+  // R2 bucket for squashfs snapshots. Shared across all agents — each agent's
+  // metadata keys are namespaced under `<AGENT_NAME>/` (see persistence.ts),
+  // so a new agent needs no new bucket, just a distinct AGENT_NAME. The
+  // binding name BACKUP_BUCKET is the convention @cloudflare/sandbox expects.
   "r2_buckets": [
     { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-flare-data" }
   ],
@@ -66,6 +68,13 @@
   // Secrets and personal vars are documented in README.md. Set secrets via
   // `wrangler secret put`; set personal vars in `.env` (see .env.example).
   "vars": {
+    // This agent's identity: the deployed Worker name AND its R2 key
+    // namespace (all agents share the one bucket below). To stand up a new
+    // agent, set AGENT_NAME in `.env` — scripts/deploy.sh applies it as the
+    // Worker `--name` and forwards it as this var. This default is the
+    // canonical agent and what `npm run dev` / `deploy:bare` use.
+    "AGENT_NAME": "hermes-flare",
+
     // "true" → Hermes replies in a thread (Slack default).
     // "false" → Hermes posts at the channel top level.
     "SLACK_REPLY_IN_THREAD": "true",

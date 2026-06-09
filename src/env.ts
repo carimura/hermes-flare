@@ -1,6 +1,14 @@
 import type { Sandbox } from "@cloudflare/sandbox";
 
 export interface Env {
+  /**
+   * This agent's identity. Doubles as (a) the deployed Worker name and (b) the
+   * R2 key namespace, so all agents can share one bucket without colliding.
+   * Set once in `.env`; scripts/deploy.sh applies it as `--name` + `--var`.
+   * Defaults to "hermes-flare" in wrangler.jsonc.
+   */
+  AGENT_NAME?: string;
+
   // The Sandbox Durable Object namespace, bound in wrangler.jsonc.
   Agent: DurableObjectNamespace<Sandbox>;
 

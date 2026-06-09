@@ -15,6 +15,11 @@ import type { Sandbox } from "@cloudflare/sandbox";
  * - The newest backup handle lives at `backup-handle.json` (the restore
  *   target); `backups-index.json` lists all retained backups so old ones
  *   can be pruned by age (see BACKUP_RETENTION_DAYS).
+ *
+ * Shared bucket: every agent points at the SAME R2 bucket, so our metadata
+ * keys are namespaced under `<agentName>/` to avoid collisions. The
+ * SDK-written squashfs blobs (`backups/<id>/...`) are already globally unique
+ * by id, so they need no prefix.
  */
 const BACKUP_DIR = "/home/hermes";
 const HANDLE_KEY = "backup-handle.json";
@@ -29,18 +34,28 @@ interface BackupHandle {
   dir: string;
 }
 
-async function getStoredHandle(bucket: R2Bucket): Promise<BackupHandle | null> {
-  const obj = await bucket.get(HANDLE_KEY);
+/** Per-agent R2 key namespace. One Worker == one agent, so this is constant. */
+function keysFor(agentName: string) {
+  const prefix = `${agentName}/`;
+  return {
+    handle: prefix + HANDLE_KEY,
+    index: prefix + INDEX_KEY,
+    restoreNeeded: prefix + RESTORE_NEEDED_KEY,
+  };
+}
+
+async function getStoredHandle(bucket: R2Bucket, key: string): Promise<BackupHandle | null> {
+  const obj = await bucket.get(key);
   if (!obj) return null;
   return obj.json();
 }
 
-async function storeHandle(bucket: R2Bucket, handle: BackupHandle): Promise<void> {
-  await bucket.put(HANDLE_KEY, JSON.stringify(handle));
+async function storeHandle(bucket: R2Bucket, key: string, handle: BackupHandle): Promise<void> {
+  await bucket.put(key, JSON.stringify(handle));
 }
 
-async function deleteStoredHandle(bucket: R2Bucket): Promise<void> {
-  await bucket.delete(HANDLE_KEY);
+async function deleteStoredHandle(bucket: R2Bucket, key: string): Promise<void> {
+  await bucket.delete(key);
 }
 
 /** One retained backup. `backups-index.json` is an array of these. */
@@ -50,8 +65,8 @@ interface BackupEntry {
   createdAt: string; // ISO 8601
 }
 
-async function getIndex(bucket: R2Bucket): Promise<BackupEntry[]> {
-  const obj = await bucket.get(INDEX_KEY);
+async function getIndex(bucket: R2Bucket, key: string): Promise<BackupEntry[]> {
+  const obj = await bucket.get(key);
   if (!obj) return [];
   try {
     return await obj.json();
@@ -60,8 +75,8 @@ async function getIndex(bucket: R2Bucket): Promise<BackupEntry[]> {
   }
 }
 
-async function putIndex(bucket: R2Bucket, entries: BackupEntry[]): Promise<void> {
-  await bucket.put(INDEX_KEY, JSON.stringify(entries));
+async function putIndex(bucket: R2Bucket, key: string, entries: BackupEntry[]): Promise<void> {
+  await bucket.put(key, JSON.stringify(entries));
 }
 
 /**
@@ -71,16 +86,18 @@ async function putIndex(bucket: R2Bucket, entries: BackupEntry[]): Promise<void>
 export async function restoreIfNeeded(
   sandbox: Sandbox,
   bucket: R2Bucket,
+  agentName: string,
 ): Promise<void> {
+  const keys = keysFor(agentName);
   if (restoredInThisIsolate) {
     // Cross-isolate invalidation: check the marker.
-    const marker = await bucket.head(RESTORE_NEEDED_KEY);
+    const marker = await bucket.head(keys.restoreNeeded);
     if (!marker) return;
     console.log("[persistence] restore-needed marker found, re-restoring");
     restoredInThisIsolate = false;
   }
 
-  const handle = await getStoredHandle(bucket);
+  const handle = await getStoredHandle(bucket, keys.handle);
   if (!handle) {
     console.log("[persistence] no prior backup, starting fresh");
     restoredInThisIsolate = true;
@@ -98,14 +115,14 @@ export async function restoreIfNeeded(
   const t0 = Date.now();
   try {
     await sandbox.restoreBackup(handle);
-    await bucket.delete(RESTORE_NEEDED_KEY);
+    await bucket.delete(keys.restoreNeeded);
     restoredInThisIsolate = true;
     console.log(`[persistence] restored in ${Date.now() - t0}ms`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/BACKUP_EXPIRED|BACKUP_NOT_FOUND|BackupExpiredError|BackupNotFoundError/.test(msg)) {
       console.log(`[persistence] backup ${handle.id} gone, clearing handle`);
-      await deleteStoredHandle(bucket);
+      await deleteStoredHandle(bucket, keys.handle);
       restoredInThisIsolate = true;
       return;
     }
@@ -123,8 +140,10 @@ export async function restoreIfNeeded(
 export async function createSnapshot(
   sandbox: Sandbox,
   bucket: R2Bucket,
+  agentName: string,
   retentionDays: number,
 ): Promise<BackupHandle> {
+  const keys = keysFor(agentName);
   // Ensure permissions are readable for mksquashfs.
   await sandbox.exec(`chmod -R a+rX ${BACKUP_DIR} 2>/dev/null; true`);
 
@@ -140,12 +159,17 @@ export async function createSnapshot(
   // restorable until we prune it — the SDK refuses to restore past ttl, and
   // its 3-day default is exactly what expired on us. No upper limit on ttl.
   const ttl = (retentionDays + 1) * SECONDS_PER_DAY;
-  const handle = await sandbox.createBackup({ dir: BACKUP_DIR, ttl });
+  // localBucket: write/read the squashfs through the bound BACKUP_BUCKET R2
+  // binding instead of presigned URLs. This is what makes snapshots zero-setup
+  // — no R2 API token, CLOUDFLARE_ACCOUNT_ID, or R2_ACCESS_KEY secrets needed;
+  // the binding is always present. restoreBackup reads this mode off the
+  // handle, so restores stay consistent with how the backup was written.
+  const handle = await sandbox.createBackup({ dir: BACKUP_DIR, ttl, localBucket: true });
   const createdAt = new Date().toISOString();
   console.log(`[persistence] snapshot ${handle.id} created in ${Date.now() - t0}ms`);
 
   // Append to the index, then prune entries older than the retention window.
-  const index = await getIndex(bucket);
+  const index = await getIndex(bucket, keys.index);
   index.push({ id: handle.id, dir: handle.dir, createdAt });
   const cutoff = Date.now() - retentionDays * SECONDS_PER_DAY * 1000;
   const kept: BackupEntry[] = [];
@@ -158,8 +182,8 @@ export async function createSnapshot(
       console.log(`[persistence] pruned backup ${entry.id} (older than ${retentionDays}d)`);
     }
   }
-  await putIndex(bucket, kept);
-  await storeHandle(bucket, handle); // newest = restore target
+  await putIndex(bucket, keys.index, kept);
+  await storeHandle(bucket, keys.handle, handle); // newest = restore target
   return handle;
 }
 
@@ -172,17 +196,18 @@ export async function createSnapshot(
 export async function snapshotIfDue(
   sandbox: Sandbox,
   bucket: R2Bucket,
+  agentName: string,
   maxAgeMs: number,
   retentionDays: number,
 ): Promise<boolean> {
-  const meta = await bucket.head(HANDLE_KEY);
+  const meta = await bucket.head(keysFor(agentName).handle);
   if (meta && Date.now() - meta.uploaded.getTime() < maxAgeMs) return false;
-  await createSnapshot(sandbox, bucket, retentionDays);
+  await createSnapshot(sandbox, bucket, agentName, retentionDays);
   return true;
 }
 
 /** Force every Worker isolate to re-restore on its next request. */
-export async function signalRestoreNeeded(bucket: R2Bucket): Promise<void> {
+export async function signalRestoreNeeded(bucket: R2Bucket, agentName: string): Promise<void> {
   restoredInThisIsolate = false;
-  await bucket.put(RESTORE_NEEDED_KEY, "1");
+  await bucket.put(keysFor(agentName).restoreNeeded, "1");
 }

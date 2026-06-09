@@ -43,7 +43,7 @@ app.get("/health", (c) => c.text("ok"));
 // ----------------------------------------------------------------------------
 app.get("/api/status", async (c) => {
   const sandbox = getAgentSandbox(c.env);
-  await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
+  await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
   const result = await ensureGateway(sandbox, c.env);
   return c.json(result);
 });
@@ -105,7 +105,7 @@ app.post("/api/snapshot", async (c) => {
   const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
-    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET, backupRetentionDays(c.env));
+    const handle = await createSnapshot(sandbox, c.env.BACKUP_BUCKET, agentName(c.env), backupRetentionDays(c.env));
     return c.json({ ok: true, handle, duration_ms: Date.now() - t0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -140,8 +140,8 @@ app.post("/api/restore", async (c) => {
   const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
-    await signalRestoreNeeded(c.env.BACKUP_BUCKET);
-    await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET);
+    await signalRestoreNeeded(c.env.BACKUP_BUCKET, agentName(c.env));
+    await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
     return c.json({ ok: true, duration_ms: Date.now() - t0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -204,14 +204,14 @@ export default {
     ctx.waitUntil(
       (async () => {
         const sandbox = getAgentSandbox(env);
-        await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
+        await restoreIfNeeded(sandbox, env.BACKUP_BUCKET, agentName(env));
         await ensureGateway(sandbox, env);
         // Keep a fresh backup well ahead of its 72h TTL. Throttled by elapsed
         // time rather than a dedicated cron, so a missed tick just snapshots on
         // the next one. Cadence set by SNAPSHOT_INTERVAL_MINUTES. Wrapped so a
         // snapshot hiccup can't fail the keepalive path.
         try {
-          await snapshotIfDue(sandbox, env.BACKUP_BUCKET, snapshotIntervalMs(env), backupRetentionDays(env));
+          await snapshotIfDue(sandbox, env.BACKUP_BUCKET, agentName(env), snapshotIntervalMs(env), backupRetentionDays(env));
         } catch (err) {
           console.error("[scheduled] snapshot failed:", err);
         }
@@ -223,6 +223,14 @@ export default {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
+
+const DEFAULT_AGENT_NAME = "hermes-flare";
+
+/** This agent's identity — the R2 key namespace (see persistence.ts). One
+ *  Worker == one agent. Falls back to the wrangler.jsonc default if unset. */
+function agentName(env: Env): string {
+  return env.AGENT_NAME && env.AGENT_NAME.length > 0 ? env.AGENT_NAME : DEFAULT_AGENT_NAME;
+}
 
 type SandboxHandleOptions = {
   keepAlive?: boolean;
