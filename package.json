@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "new-agent": "bash scripts/new-agent.sh",
     "deploy": "bash scripts/deploy.sh",
     "deploy:bare": "wrangler deploy",
     "typecheck": "tsc --noEmit",

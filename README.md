@@ -80,20 +80,25 @@ First hit takes 1-2 minutes (cold container + Hermes gateway boot). After that, 
 
 ### Running multiple agents
 
-Each agent is one deployed Worker. To stand up another, clone the repo, set a
-distinct `AGENT_NAME` in `.env`, push that agent's own secrets, and deploy:
+Each agent is one deployed Worker. The guided setup script does the whole thing
+— config, the Slack app manifest, secrets, and deploy — with nothing to
+hand-edit:
 
 ```sh
 git clone https://github.com/carimura/hermes-flare athena && cd athena
 npm install
-cp .env.example .env          # set AGENT_NAME=athena + this agent's Slack IDs
-npx wrangler secret put ANTHROPIC_API_KEY    # ...and the rest, per agent
-npm run deploy                # deploys a Worker named "athena"
+npm run new-agent   # prompts for config, shows you the Slack manifest, then deploys
 ```
 
-No new R2 bucket is needed — all agents share `hermes-flare-data`, and each
-agent's snapshots are namespaced under `<AGENT_NAME>/`. `AGENT_NAME` is the
-only structural change between clones; everything else is per-agent secrets/IDs.
+It asks for an `AGENT_NAME`, generates the Slack manifest for you to paste into
+https://api.slack.com/apps (so you can copy the bot/app tokens back in), writes
+this clone's `.env`, pushes secrets via `wrangler secret put`, and deploys a
+Worker named after the agent. No new R2 bucket is needed — all agents share
+`hermes-flare-data`, with each agent's snapshots namespaced under
+`<AGENT_NAME>/`. `AGENT_NAME` is the only structural difference between agents.
+
+Prefer to do it by hand? Set `AGENT_NAME` in `.env`, `wrangler secret put` the
+four secrets (see [Slack setup](#slack-setup)), and `npm run deploy`.
 
 ### Snapshots
 
@@ -250,6 +255,7 @@ hermes-flare/
 ├─ tsconfig.json
 ├─ .env.example
 ├─ scripts/
+│  ├─ new-agent.sh          # guided: create + launch a new agent
 │  └─ deploy.sh             # reads .env, applies --var, deploys
 └─ src/
    ├─ index.ts              # Hono router, Worker entry, ensureGateway
