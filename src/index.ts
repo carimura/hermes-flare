@@ -253,7 +253,7 @@ function getExecSandbox(env: Env): Sandbox {
   return getSandbox(env.Exec, EXEC_SANDBOX_INSTANCE, getSandboxOptions(env));
 }
 
-const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 60;
+const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 240;
 
 /** Minimum age of the latest backup before the cron takes a fresh snapshot. */
 function snapshotIntervalMs(env: Env): number {
