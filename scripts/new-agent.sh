@@ -3,7 +3,7 @@
 #
 # Run this in a FRESH clone of the repo (one clone == one agent):
 #   git clone https://github.com/carimura/hermes-flare my-agent
-#   cd my-agent && npm install && npm run new-agent
+#   cd my-agent && npm run new-agent
 #
 # It gathers config, shows you the Slack app manifest (so you can create the
 # app and copy its tokens), then writes .env, pushes secrets, and deploys.
@@ -42,6 +42,10 @@ command -v openssl >/dev/null || die "openssl not found (needed to mint the gate
 command -v docker >/dev/null  || note "Heads up: 'docker' not found — wrangler needs it to build the container image."
 
 say "Hermes — new agent setup"
+if [ ! -d node_modules ]; then
+  note "node_modules missing — running npm install first..."
+  npm install
+fi
 if ! npx wrangler whoami >/dev/null 2>&1; then
   die "wrangler isn't authenticated. Run:  npx wrangler login   then re-run me."
 fi
