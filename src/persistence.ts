@@ -78,7 +78,7 @@ export async function restoreIfNeeded(
     console.log(`[persistence] restored in ${Date.now() - t0}ms`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("BACKUP_EXPIRED") || msg.includes("BACKUP_NOT_FOUND")) {
+    if (/BACKUP_EXPIRED|BACKUP_NOT_FOUND|BackupExpiredError|BackupNotFoundError/.test(msg)) {
       console.log(`[persistence] backup ${handle.id} gone, clearing handle`);
       await deleteStoredHandle(bucket);
       restoredInThisIsolate = true;
