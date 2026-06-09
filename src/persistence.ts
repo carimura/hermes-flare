@@ -118,6 +118,23 @@ export async function createSnapshot(
   return handle;
 }
 
+/**
+ * Snapshot /home/hermes only if the latest backup is older than maxAgeMs (or
+ * there is none). Cheap to call on every cron tick — one R2 HEAD on the fast
+ * path. Reuses backup-handle.json's own upload time, so there's no extra state
+ * to track. Returns true if a snapshot was taken.
+ */
+export async function snapshotIfDue(
+  sandbox: Sandbox,
+  bucket: R2Bucket,
+  maxAgeMs: number,
+): Promise<boolean> {
+  const meta = await bucket.head(HANDLE_KEY);
+  if (meta && Date.now() - meta.uploaded.getTime() < maxAgeMs) return false;
+  await createSnapshot(sandbox, bucket);
+  return true;
+}
+
 /** Force every Worker isolate to re-restore on its next request. */
 export async function signalRestoreNeeded(bucket: R2Bucket): Promise<void> {
   restoredInThisIsolate = false;

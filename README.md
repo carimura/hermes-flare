@@ -175,6 +175,7 @@ Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in
 | `SLACK_HOME_CHANNEL` | — | `.env` | Slack channel ID for scheduled/cron output |
 | `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
 | `SANDBOX_SLEEP_AFTER` | `never` | wrangler.jsonc | `"10m"`/`"1h"` etc. to hibernate when idle |
+| `SNAPSHOT_INTERVAL_MINUTES` | `60` | wrangler.jsonc | Max age of the latest R2 backup before the cron re-snapshots |
 
 ## Endpoints
 
@@ -189,7 +190,7 @@ All `/api/*` routes require `?token=$HERMES_GATEWAY_TOKEN`.
 | POST | `/api/snapshot` | Snapshot `/home/hermes` to R2 |
 | POST | `/api/kill` | Kill the gateway process (cron will revive it within 5 min) |
 
-The cron trigger runs every 5 minutes, calling `restoreIfNeeded` + `ensureGateway` — so the gateway always comes back from a kill or container restart without manual intervention.
+The cron trigger runs every 5 minutes, calling `restoreIfNeeded` + `ensureGateway` — so the gateway always comes back from a kill or container restart without manual intervention. It also snapshots `/home/hermes` to R2 whenever the latest backup is older than `SNAPSHOT_INTERVAL_MINUTES` (default 60), keeping a fresh backup ahead of the 72h snapshot TTL.
 
 ## Persistence
 

@@ -52,13 +52,12 @@
     { "binding": "BACKUP_BUCKET", "bucket_name": "hermes-flare-data" }
   ],
 
-  // Wake the container periodically to give cron-scheduled tasks inside
-  // Hermes a chance to fire. Every minute is overkill for now; tune later.
-  // The hourly tick ("0 * * * *") additionally snapshots /home/hermes to R2
-  // (see HOURLY_SNAPSHOT_CRON in src/index.ts) so a fresh backup always exists
-  // before the previous one's 72h TTL expires.
+  // Wake the container every 5 min: restore-if-needed, keep the gateway alive,
+  // and snapshot /home/hermes to R2 once the last backup is older than
+  // SNAPSHOT_INTERVAL_MINUTES (see scheduled() in src/index.ts) so a fresh
+  // backup always exists before the previous one's 72h TTL expires.
   "triggers": {
-    "crons": ["*/5 * * * *", "0 * * * *"]
+    "crons": ["*/5 * * * *"]
   },
 
   // Universal non-secret defaults. Personal config (Slack member IDs,
@@ -73,6 +72,10 @@
 
     // Container hibernation. "never" keeps it warm (faster, more expensive).
     // Set "10m" / "1h" / "30s" to scale to zero when idle.
-    "SANDBOX_SLEEP_AFTER": "never"
+    "SANDBOX_SLEEP_AFTER": "never",
+
+    // How stale the latest R2 backup may get (minutes) before the 5-min cron
+    // takes a fresh snapshot. Values below 5 effectively mean "every tick".
+    "SNAPSHOT_INTERVAL_MINUTES": "60"
   }
 }

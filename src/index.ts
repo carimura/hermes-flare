@@ -1,13 +1,12 @@
 import { Hono } from "hono";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { Env } from "./env";
-import { createSnapshot, restoreIfNeeded, signalRestoreNeeded } from "./persistence";
+import { createSnapshot, restoreIfNeeded, signalRestoreNeeded, snapshotIfDue } from "./persistence";
 
 export { Agent, Exec } from "./sandbox";
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
 const EXEC_SANDBOX_INSTANCE = "exec";
-const HOURLY_SNAPSHOT_CRON = "0 * * * *"; // must match a wrangler.jsonc triggers.crons entry
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -198,7 +197,7 @@ app.post("/api/sandbox/exec", async (c) => {
 export default {
   fetch: app.fetch,
 
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Cron-driven keepalive: restore from R2 if needed, then make sure the
     // Hermes gateway is running so Slack Socket Mode is connected and any
     // cron-scheduled Hermes tasks have a chance to fire.
@@ -207,16 +206,14 @@ export default {
         const sandbox = getAgentSandbox(env);
         await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
         await ensureGateway(sandbox, env);
-        // The hourly cron also snapshots /home/hermes to R2 so a fresh backup
-        // always exists well before the previous one's 72h TTL expires -- an
-        // expired snapshot is what took the agent down. Wrapped so a snapshot
-        // hiccup can't fail the keepalive path.
-        if (controller.cron === HOURLY_SNAPSHOT_CRON) {
-          try {
-            await createSnapshot(sandbox, env.BACKUP_BUCKET);
-          } catch (err) {
-            console.error("[scheduled] hourly snapshot failed:", err);
-          }
+        // Keep a fresh backup well ahead of its 72h TTL. Throttled by elapsed
+        // time rather than a dedicated cron, so a missed tick just snapshots on
+        // the next one. Cadence set by SNAPSHOT_INTERVAL_MINUTES. Wrapped so a
+        // snapshot hiccup can't fail the keepalive path.
+        try {
+          await snapshotIfDue(sandbox, env.BACKUP_BUCKET, snapshotIntervalMs(env));
+        } catch (err) {
+          console.error("[scheduled] snapshot failed:", err);
         }
       })(),
     );
@@ -254,6 +251,14 @@ function getAgentSandbox(env: Env): Sandbox {
 
 function getExecSandbox(env: Env): Sandbox {
   return getSandbox(env.Exec, EXEC_SANDBOX_INSTANCE, getSandboxOptions(env));
+}
+
+const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 60;
+
+/** Minimum age of the latest backup before the cron takes a fresh snapshot. */
+function snapshotIntervalMs(env: Env): number {
+  const minutes = Number(env.SNAPSHOT_INTERVAL_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_SNAPSHOT_INTERVAL_MINUTES) * 60_000;
 }
 
 function buildGatewayEnv(env: Env): Record<string, string> {

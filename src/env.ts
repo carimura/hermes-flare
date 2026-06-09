@@ -35,6 +35,9 @@ export interface Env {
   /** "never" (default) keeps the container warm. Set "10m", "1h", etc. to hibernate. */
   SANDBOX_SLEEP_AFTER?: string;
 
+  /** Minutes the latest R2 backup may age before the cron re-snapshots. Default 60. From vars. */
+  SNAPSHOT_INTERVAL_MINUTES?: string;
+
   /**
    * Public URL of THIS Worker, used by the Hermes container's
    * cloudflare_sandbox backend to POST commands back to /api/sandbox/exec.
