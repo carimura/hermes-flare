@@ -177,17 +177,19 @@ DM the bot in Slack — first message wakes the container (1-2 min), subsequent 
 
 ### Non-secret vars
 
-Defaults live in `wrangler.jsonc`; personal IDs and per-environment tweaks go in `.env` (gitignored). `npm run deploy` reads `.env` and applies values via `wrangler deploy --var`. `.env` holds **non-secret** values only — secrets always go through `wrangler secret put` (encrypted), never `.env`.
+All non-secret config lives in `.env` (gitignored); `npm run deploy` applies each via `wrangler deploy --var`. `wrangler.jsonc` is infrastructure-only (bindings, container, cron) — no app config. Secrets never go in `.env`; push them with `wrangler secret put`. Optional vars fall back to the code defaults below when unset.
 
-| Var | Default | Where | Purpose |
-|---|---|---|---|
-| `AGENT_NAME` | `hermes-flare` | `.env` | This agent's identity — names the deployed Worker and namespaces its snapshots in the shared R2 bucket. The one knob to change when cloning. |
-| `SLACK_ALLOWED_USERS` | — | `.env` | Comma-separated Slack member IDs allowed to talk to the bot |
-| `SLACK_HOME_CHANNEL` | — | `.env` | Slack channel ID for scheduled/cron output |
-| `SLACK_REPLY_IN_THREAD` | `true` | wrangler.jsonc | `false` → post to channel top level instead of threading |
-| `SANDBOX_SLEEP_AFTER` | `never` | wrangler.jsonc | `"10m"`/`"1h"` etc. to hibernate when idle |
-| `SNAPSHOT_INTERVAL_MINUTES` | `240` | wrangler.jsonc | Max age (min) of the latest R2 backup before the cron re-snapshots; 240 = 4h |
-| `BACKUP_RETENTION_DAYS` | `3` | wrangler.jsonc | Days of backups to retain; older ones are pruned from R2 |
+| Var | Default | Purpose |
+|---|---|---|
+| `AGENT_NAME` | `hermes-flare` | This agent's identity — names the deployed Worker and namespaces its snapshots in the shared R2 bucket. The one knob to change when cloning. |
+| `WORKERS_SUBDOMAIN` | — (required) | Your workers.dev subdomain; the Worker composes its URL as `https://<AGENT_NAME>.<WORKERS_SUBDOMAIN>.workers.dev` |
+| `SLACK_ALLOWED_USERS` | — | Comma-separated Slack member IDs allowed to talk to the bot |
+| `SLACK_HOME_CHANNEL` | — | Slack channel ID for scheduled/cron output |
+| `SLACK_REPLY_IN_THREAD` | `true` | `false` → post to channel top level instead of threading |
+| `SANDBOX_SLEEP_AFTER` | `never` | `"10m"`/`"1h"` etc. to hibernate when idle |
+| `SNAPSHOT_INTERVAL_MINUTES` | `240` | Max age (min) of the latest R2 backup before the cron re-snapshots; 240 = 4h |
+| `BACKUP_RETENTION_DAYS` | `3` | Days of backups to retain; older ones are pruned from R2 |
+| `WORKER_PUBLIC_URL` | derived | Override the derived URL (e.g. a custom domain) |
 
 ## Endpoints
 

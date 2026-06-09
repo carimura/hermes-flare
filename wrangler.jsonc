@@ -57,45 +57,15 @@
   // Wake the container every 5 min: restore-if-needed, keep the gateway alive,
   // and snapshot /home/hermes to R2 once the last backup is older than
   // SNAPSHOT_INTERVAL_MINUTES (see scheduled() in src/index.ts) so a fresh
-  // backup always exists before the previous one's 72h TTL expires.
+  // backup always exists before its TTL expires.
   "triggers": {
     "crons": ["*/5 * * * *"]
-  },
-
-  // Universal non-secret defaults. Personal config (Slack member IDs,
-  // home channel) lives in `.env` (gitignored) and is applied via
-  // `wrangler deploy --var` by scripts/deploy.sh. Use `npm run deploy`.
-  // Secrets and personal vars are documented in README.md. Set secrets via
-  // `wrangler secret put`; set personal vars in `.env` (see .env.example).
-  "vars": {
-    // This agent's identity: the deployed Worker name AND its R2 key
-    // namespace (all agents share the one bucket below). To stand up a new
-    // agent, set AGENT_NAME in `.env` — scripts/deploy.sh applies it as the
-    // Worker `--name` and forwards it as this var. This default is the
-    // canonical agent and what `npm run dev` / `deploy:bare` use.
-    "AGENT_NAME": "hermes-flare",
-
-    // Your account's workers.dev subdomain. The Worker composes its public URL
-    // as https://<AGENT_NAME>.<WORKERS_SUBDOMAIN>.workers.dev for the
-    // container's terminal backend — so cloning needs no per-agent URL. An
-    // account constant; override per-agent via .env only if it differs.
-    "WORKERS_SUBDOMAIN": "carimura",
-
-    // "true" → Hermes replies in a thread (Slack default).
-    // "false" → Hermes posts at the channel top level.
-    "SLACK_REPLY_IN_THREAD": "true",
-
-    // Container hibernation. "never" keeps it warm (faster, more expensive).
-    // Set "10m" / "1h" / "30s" to scale to zero when idle.
-    "SANDBOX_SLEEP_AFTER": "never",
-
-    // How stale the latest R2 backup may get (minutes) before the 5-min cron
-    // takes a fresh snapshot. 240 = every 4h. Values below 5 mean "every tick".
-    "SNAPSHOT_INTERVAL_MINUTES": "240",
-
-    // Days of backups to retain. Each snapshot prunes backups older than this
-    // from R2; each backup's ttl is set a day beyond it so retained backups
-    // stay restorable. Raise SNAPSHOT_INTERVAL_MINUTES to keep fewer.
-    "BACKUP_RETENTION_DAYS": "3"
   }
+
+  // No `vars` block on purpose: ALL non-secret config (AGENT_NAME,
+  // WORKERS_SUBDOMAIN, Slack IDs, snapshot cadence, ...) lives in `.env`
+  // (gitignored) and is applied via `wrangler deploy --var` by
+  // scripts/deploy.sh — see .env.example. Optional vars fall back to code
+  // defaults in src/index.ts when unset. This file stays infrastructure-only;
+  // secrets go via `wrangler secret put`.
 }
