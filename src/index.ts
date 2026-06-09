@@ -7,6 +7,7 @@ export { Agent, Exec } from "./sandbox";
 
 const SANDBOX_INSTANCE = "hermes"; // single-instance for now
 const EXEC_SANDBOX_INSTANCE = "exec";
+const HOURLY_SNAPSHOT_CRON = "0 * * * *"; // must match a wrangler.jsonc triggers.crons entry
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -197,7 +198,7 @@ app.post("/api/sandbox/exec", async (c) => {
 export default {
   fetch: app.fetch,
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Cron-driven keepalive: restore from R2 if needed, then make sure the
     // Hermes gateway is running so Slack Socket Mode is connected and any
     // cron-scheduled Hermes tasks have a chance to fire.
@@ -206,6 +207,17 @@ export default {
         const sandbox = getAgentSandbox(env);
         await restoreIfNeeded(sandbox, env.BACKUP_BUCKET);
         await ensureGateway(sandbox, env);
+        // The hourly cron also snapshots /home/hermes to R2 so a fresh backup
+        // always exists well before the previous one's 72h TTL expires -- an
+        // expired snapshot is what took the agent down. Wrapped so a snapshot
+        // hiccup can't fail the keepalive path.
+        if (controller.cron === HOURLY_SNAPSHOT_CRON) {
+          try {
+            await createSnapshot(sandbox, env.BACKUP_BUCKET);
+          } catch (err) {
+            console.error("[scheduled] hourly snapshot failed:", err);
+          }
+        }
       })(),
     );
   },
