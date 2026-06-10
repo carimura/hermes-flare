@@ -8,10 +8,13 @@ import type { Sandbox } from "@cloudflare/sandbox";
  * /home, /workspace, /tmp, /var/tmp — we use /home/hermes (Hermes' data
  * dir is at /home/hermes/.hermes, plus /opt/data is symlinked there).
  *
- * Strategy (lifted from cloudflare/moltworker):
- * - In-isolate flag for fast path (skip R2 read on every request).
- * - R2 marker key (`restore-needed`) lets other isolates know to re-restore
- *   after a config change or gateway restart.
+ * Strategy:
+ * - Restores happen in exactly one place: the gateway start path (see
+ *   ensureGateway in index.ts). A running gateway's state is live and must
+ *   never be restored over; a missing gateway means a fresh container or a
+ *   deliberate /api/kill, and both want the snapshot back before starting.
+ *   No flags or cross-isolate markers needed — the process check IS the
+ *   container-lifecycle signal.
  * - The newest backup handle lives at `backup-handle.json` (the restore
  *   target); `backups-index.json` lists all retained backups so old ones
  *   can be pruned by age (see BACKUP_RETENTION_DAYS).
@@ -31,10 +34,7 @@ const BACKUP_DIR = "/home/hermes";
 const SENTINEL_FILE = "/home/hermes/.local/bin/hermes";
 const HANDLE_KEY = "backup-handle.json";
 const INDEX_KEY = "backups-index.json";
-const RESTORE_NEEDED_KEY = "restore-needed";
 const SECONDS_PER_DAY = 86_400;
-
-let restoredInThisIsolate = false;
 
 async function assertTreeHealthy(sandbox: Sandbox, context: string): Promise<void> {
   const check = await sandbox.exec(`test -s ${SENTINEL_FILE} && echo __ok__ || true`);
@@ -56,7 +56,6 @@ function keysFor(agentName: string) {
   return {
     handle: prefix + HANDLE_KEY,
     index: prefix + INDEX_KEY,
-    restoreNeeded: prefix + RESTORE_NEEDED_KEY,
   };
 }
 
@@ -96,28 +95,22 @@ async function putIndex(bucket: R2Bucket, key: string, entries: BackupEntry[]): 
 }
 
 /**
- * Restore the latest backup if one exists and this isolate hasn't restored yet.
- * Cheap to call on every request — only hits R2 on cache miss.
+ * Restore the latest backup if one exists. Returns true if a restore ran.
+ *
+ * Called only when the gateway is about to start (and from /api/restore,
+ * whose docs say to /api/kill first) — never while it is running, since a
+ * restore overwrites the live tree with state up to a snapshot-interval old.
  */
-export async function restoreIfNeeded(
+export async function restoreLatest(
   sandbox: Sandbox,
   bucket: R2Bucket,
   agentName: string,
-): Promise<void> {
+): Promise<boolean> {
   const keys = keysFor(agentName);
-  if (restoredInThisIsolate) {
-    // Cross-isolate invalidation: check the marker.
-    const marker = await bucket.head(keys.restoreNeeded);
-    if (!marker) return;
-    console.log("[persistence] restore-needed marker found, re-restoring");
-    restoredInThisIsolate = false;
-  }
-
   const handle = await getStoredHandle(bucket, keys.handle);
   if (!handle) {
     console.log("[persistence] no prior backup, starting fresh");
-    restoredInThisIsolate = true;
-    return;
+    return false;
   }
 
   // Clear any stale FUSE overlay before re-restoring.
@@ -132,16 +125,14 @@ export async function restoreIfNeeded(
   try {
     await sandbox.restoreBackup(handle);
     await assertTreeHealthy(sandbox, `restore ${handle.id}`);
-    await bucket.delete(keys.restoreNeeded);
-    restoredInThisIsolate = true;
     console.log(`[persistence] restored in ${Date.now() - t0}ms`);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/BACKUP_EXPIRED|BACKUP_NOT_FOUND|BackupExpiredError|BackupNotFoundError/.test(msg)) {
       console.log(`[persistence] backup ${handle.id} gone, clearing handle`);
       await deleteStoredHandle(bucket, keys.handle);
-      restoredInThisIsolate = true;
-      return;
+      return false;
     }
     throw err;
   }
@@ -224,8 +215,3 @@ export async function snapshotIfDue(
   return true;
 }
 
-/** Force every Worker isolate to re-restore on its next request. */
-export async function signalRestoreNeeded(bucket: R2Bucket, agentName: string): Promise<void> {
-  restoredInThisIsolate = false;
-  await bucket.put(keysFor(agentName).restoreNeeded, "1");
-}

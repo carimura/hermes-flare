@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { Env } from "./env";
-import { createSnapshot, restoreIfNeeded, signalRestoreNeeded, snapshotIfDue } from "./persistence";
+import { createSnapshot, restoreLatest, snapshotIfDue } from "./persistence";
 
 export { Agent, Exec } from "./sandbox";
 
@@ -43,17 +43,8 @@ app.get("/health", (c) => c.text("ok"));
 // ----------------------------------------------------------------------------
 app.get("/api/status", async (c) => {
   const sandbox = getAgentSandbox(c.env);
-  // A broken restore must not keep the gateway down — surface the error in
-  // the response instead of 500ing before ensureGateway gets a chance to run.
-  let restoreError: string | undefined;
-  try {
-    await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
-  } catch (err) {
-    restoreError = err instanceof Error ? err.message : String(err);
-    console.error("[status] restore failed (continuing):", err);
-  }
   const result = await ensureGateway(sandbox, c.env);
-  return c.json(restoreError ? { ...result, restore_error: restoreError } : result);
+  return c.json(result);
 });
 
 // ----------------------------------------------------------------------------
@@ -141,16 +132,14 @@ app.post("/api/hermes/exec", async (c) => {
 });
 
 // Force-restore from the latest R2 snapshot. Useful for testing the round-trip
-// or after manually corrupting state. Sets the cross-isolate `restore-needed`
-// marker and synchronously runs the restore. The gateway should be killed
-// first (POST /api/kill) so the squashfs overlay doesn't fight live writes.
+// or after manually corrupting state. The gateway should be killed first
+// (POST /api/kill) so the restore doesn't fight live writes.
 app.post("/api/restore", async (c) => {
   const sandbox = getAgentSandbox(c.env);
   const t0 = Date.now();
   try {
-    await signalRestoreNeeded(c.env.BACKUP_BUCKET, agentName(c.env));
-    await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
-    return c.json({ ok: true, duration_ms: Date.now() - t0 });
+    const restored = await restoreLatest(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
+    return c.json({ ok: true, restored, duration_ms: Date.now() - t0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ ok: false, error: message, duration_ms: Date.now() - t0 }, 500);
@@ -206,18 +195,12 @@ export default {
   fetch: app.fetch,
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Cron-driven keepalive: restore from R2 if needed, then make sure the
-    // Hermes gateway is running so Slack Socket Mode is connected and any
-    // cron-scheduled Hermes tasks have a chance to fire.
+    // Cron-driven keepalive: make sure the Hermes gateway is running (which
+    // restores from R2 first when the container is fresh) so Slack Socket
+    // Mode is connected and any cron-scheduled Hermes tasks can fire.
     ctx.waitUntil(
       (async () => {
         const sandbox = getAgentSandbox(env);
-        // Same as /api/status: a failed restore must not block the keepalive.
-        try {
-          await restoreIfNeeded(sandbox, env.BACKUP_BUCKET, agentName(env));
-        } catch (err) {
-          console.error("[scheduled] restore failed (continuing):", err);
-        }
         await ensureGateway(sandbox, env);
         // Keep a fresh backup well ahead of its 72h TTL. Throttled by elapsed
         // time rather than a dedicated cron, so a missed tick just snapshots on
@@ -348,12 +331,17 @@ function buildGatewayEnv(env: Env): Record<string, string> {
  * concurrent callers within the same isolate; cross-isolate races are
  * still possible but rare and Hermes' own gateway.lock catches them.
  */
-let gatewayStartInFlight: Promise<{ container: string; gateway_running: boolean; pid?: string }> | null = null;
+let gatewayStartInFlight: Promise<{
+  container: string;
+  gateway_running: boolean;
+  pid?: string;
+  restore_error?: string;
+}> | null = null;
 
 async function ensureGateway(
   sandbox: Sandbox,
   env: Env,
-): Promise<{ container: string; gateway_running: boolean; pid?: string }> {
+): Promise<{ container: string; gateway_running: boolean; pid?: string; restore_error?: string }> {
   // Fast path: a gateway is already (or still) running.
   const existing = await findGatewayProcess(sandbox);
   if (existing) {
@@ -375,6 +363,20 @@ async function ensureGateway(
         return { container: "running", gateway_running: true, pid: recheck.id };
       }
 
+      // No gateway means a fresh container (processes don't survive
+      // restarts) or a deliberate /api/kill — both want the latest snapshot
+      // back before starting. This is the ONLY place restores happen: a
+      // running gateway's state is live and must never be restored over.
+      // A failed restore must not keep the gateway down — surface it in the
+      // result instead.
+      let restoreError: string | undefined;
+      try {
+        await restoreLatest(sandbox, env.BACKUP_BUCKET, agentName(env));
+      } catch (err) {
+        restoreError = err instanceof Error ? err.message : String(err);
+        console.error("[ensureGateway] restore failed (continuing):", err);
+      }
+
       // Start the gateway via our script, capturing output to a known
       // file so /api/logs can surface it. PYTHONUNBUFFERED=1 prevents
       // Hermes (Python) from buffering its stdout when redirected.
@@ -389,7 +391,12 @@ async function ensureGateway(
         { env: envVars },
       );
       console.log(`[ensureGateway] pid=${proc.id} status=${proc.status}`);
-      return { container: "running", gateway_running: true, pid: proc.id };
+      return {
+        container: "running",
+        gateway_running: true,
+        pid: proc.id,
+        ...(restoreError ? { restore_error: restoreError } : {}),
+      };
     } finally {
       gatewayStartInFlight = null;
     }
