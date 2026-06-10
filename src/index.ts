@@ -105,6 +105,16 @@ app.post("/api/kill", async (c) => {
   return c.json({ ok: true });
 });
 
+// Destroy the Agent container outright — the next request boots it fresh
+// from the image. Recovery hatch for a corrupted /home/hermes; pair with
+// clearing the agent's R2 backup keys first, or restoreIfNeeded will pull
+// the corruption right back in.
+app.post("/api/reset", async (c) => {
+  const sandbox = getAgentSandbox(c.env);
+  await sandbox.destroy();
+  return c.json({ ok: true });
+});
+
 // Snapshot /home/hermes to R2. Synchronous — `ctx.waitUntil()` was getting
 // cancelled within a second on light traffic, so we just block the response
 // on mksquashfs. /home/hermes is small (~100MB) since the Hermes install
