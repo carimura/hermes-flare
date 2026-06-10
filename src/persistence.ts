@@ -22,12 +22,28 @@ import type { Sandbox } from "@cloudflare/sandbox";
  * by id, so they need no prefix.
  */
 const BACKUP_DIR = "/home/hermes";
+/** Corruption sentinel: a healthy /home/hermes always has a non-empty hermes
+ *  launcher (a symlink into /opt/hermes-install, baked into the image). A
+ *  partial unsquashfs extraction — seen when a restore's archive transfer is
+ *  truncated — leaves it as a 0-byte regular file. Checked before every
+ *  snapshot (never archive a corrupt tree: that turns one bad restore into a
+ *  permanently bad newest-backup) and after every restore (fail loudly). */
+const SENTINEL_FILE = "/home/hermes/.local/bin/hermes";
 const HANDLE_KEY = "backup-handle.json";
 const INDEX_KEY = "backups-index.json";
 const RESTORE_NEEDED_KEY = "restore-needed";
 const SECONDS_PER_DAY = 86_400;
 
 let restoredInThisIsolate = false;
+
+async function assertTreeHealthy(sandbox: Sandbox, context: string): Promise<void> {
+  const check = await sandbox.exec(`test -s ${SENTINEL_FILE} && echo __ok__ || true`);
+  if (!check.stdout.includes("__ok__")) {
+    throw new Error(
+      `${context}: ${SENTINEL_FILE} is missing or empty — ${BACKUP_DIR} looks corrupt (partial restore?)`,
+    );
+  }
+}
 
 interface BackupHandle {
   id: string;
@@ -115,6 +131,7 @@ export async function restoreIfNeeded(
   const t0 = Date.now();
   try {
     await sandbox.restoreBackup(handle);
+    await assertTreeHealthy(sandbox, `restore ${handle.id}`);
     await bucket.delete(keys.restoreNeeded);
     restoredInThisIsolate = true;
     console.log(`[persistence] restored in ${Date.now() - t0}ms`);
@@ -144,6 +161,7 @@ export async function createSnapshot(
   retentionDays: number,
 ): Promise<BackupHandle> {
   const keys = keysFor(agentName);
+  await assertTreeHealthy(sandbox, "pre-snapshot check");
   // Ensure permissions are readable for mksquashfs.
   await sandbox.exec(`chmod -R a+rX ${BACKUP_DIR} 2>/dev/null; true`);
 
