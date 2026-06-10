@@ -43,9 +43,17 @@ app.get("/health", (c) => c.text("ok"));
 // ----------------------------------------------------------------------------
 app.get("/api/status", async (c) => {
   const sandbox = getAgentSandbox(c.env);
-  await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
+  // A broken restore must not keep the gateway down — surface the error in
+  // the response instead of 500ing before ensureGateway gets a chance to run.
+  let restoreError: string | undefined;
+  try {
+    await restoreIfNeeded(sandbox, c.env.BACKUP_BUCKET, agentName(c.env));
+  } catch (err) {
+    restoreError = err instanceof Error ? err.message : String(err);
+    console.error("[status] restore failed (continuing):", err);
+  }
   const result = await ensureGateway(sandbox, c.env);
-  return c.json(result);
+  return c.json(restoreError ? { ...result, restore_error: restoreError } : result);
 });
 
 // ----------------------------------------------------------------------------
@@ -204,7 +212,12 @@ export default {
     ctx.waitUntil(
       (async () => {
         const sandbox = getAgentSandbox(env);
-        await restoreIfNeeded(sandbox, env.BACKUP_BUCKET, agentName(env));
+        // Same as /api/status: a failed restore must not block the keepalive.
+        try {
+          await restoreIfNeeded(sandbox, env.BACKUP_BUCKET, agentName(env));
+        } catch (err) {
+          console.error("[scheduled] restore failed (continuing):", err);
+        }
         await ensureGateway(sandbox, env);
         // Keep a fresh backup well ahead of its 72h TTL. Throttled by elapsed
         // time rather than a dedicated cron, so a missed tick just snapshots on
@@ -244,6 +257,7 @@ function workerPublicUrl(env: Env): string {
 type SandboxHandleOptions = {
   keepAlive?: boolean;
   sleepAfter?: string;
+  transport?: "rpc";
 };
 
 const FORWARDED_OPTIONAL_ENV_KEYS = [
@@ -257,9 +271,13 @@ const FORWARDED_OPTIONAL_ENV_KEYS = [
 ] as const;
 
 function getSandboxOptions(env: Env): SandboxHandleOptions {
+  // transport "rpc": the default "http" transport buffers an entire backup
+  // archive (plus a base64 copy) in the DO isolate on restoreBackup, which
+  // blows the 128MB memory limit on our ~150MB /home/hermes snapshots. The
+  // rpc control path streams it into the container instead.
   return env.SANDBOX_SLEEP_AFTER && env.SANDBOX_SLEEP_AFTER !== "never"
-    ? { sleepAfter: env.SANDBOX_SLEEP_AFTER }
-    : { keepAlive: true };
+    ? { sleepAfter: env.SANDBOX_SLEEP_AFTER, transport: "rpc" }
+    : { keepAlive: true, transport: "rpc" };
 }
 
 function getAgentSandbox(env: Env): Sandbox {
