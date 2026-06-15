@@ -1,8 +1,16 @@
 {
   "name": "hermes-flare",
   "version": "0.0.1",
-  "private": true,
   "description": "Run Nous Research's Hermes Agent in a Cloudflare Sandbox container with R2-backed persistence",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carimura/hermes-flare.git"
+  },
+  "bugs": {
+    "url": "https://github.com/carimura/hermes-flare/issues"
+  },
+  "homepage": "https://github.com/carimura/hermes-flare#readme",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

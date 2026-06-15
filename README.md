@@ -122,6 +122,10 @@ Wrangler then:
 
 `npm run deploy:bare` bypasses the script and runs `wrangler deploy` directly — useful if you want to skip `.env` injection.
 
+Container SSH is intentionally disabled in the committed `wrangler.jsonc`.
+If you enable SSH for debugging, add your own `authorized_keys` locally and
+avoid committing personal keys.
+
 ### After deploying
 
 **For Worker-only changes** (routes, env-var pass-through): the Worker hot-swaps on deploy. No further action needed.

@@ -14,21 +14,13 @@
       "class_name": "Agent",
       "image": "./Dockerfile",
       "instance_type": "standard-1",
-      "max_instances": 1,
-      "ssh": { "enabled": true },
-      "authorized_keys": [
-      { "name": "chad", "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUclJrxuOG4koiq8iow7ByY/5TO6MgVrDEWEX+vOJcY hermes-cf" }
-      ]
+      "max_instances": 1
     },
     {
       "class_name": "Exec",
       "image": "./Dockerfile.exec",
       "instance_type": "lite",
-      "max_instances": 1,
-      "ssh": { "enabled": true },
-      "authorized_keys": [
-      { "name": "chad", "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUclJrxuOG4koiq8iow7ByY/5TO6MgVrDEWEX+vOJcY hermes-cf" }
-      ]
+      "max_instances": 1
     }
   ],
 
@@ -39,9 +31,7 @@
       { "class_name": "Exec", "name": "Exec" }
     ]
   },
-  // Fresh migration: this Worker (`hermes-flare`) is new; nothing to migrate
-  // from. The old Worker (`hermes-cloudflare`) keeps its own state until
-  // manually deleted via `wrangler delete`.
+  // Initial Durable Object migration for this Worker.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Agent", "Exec"] }
   ],
